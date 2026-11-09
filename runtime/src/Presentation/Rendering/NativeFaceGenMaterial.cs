@@ -102,7 +102,7 @@ internal static class NativeFaceGenMaterial
                     _ => throw new InvalidDataException("FaceGen alpha comparison is invalid.")
                 };
                 alphaTest = "float a = texture(base_map, UV).a; float t = " +
-                    (alpha.Threshold / 255f).ToString("R", System.Globalization.CultureInfo.InvariantCulture) + "; if (!(" + comparison + ")) discard;";
+                    (alpha.Threshold / 255f).ToString("0.0######", System.Globalization.CultureInfo.InvariantCulture) + "; if (!(" + comparison + ")) discard;";
             }
         }
         var code = BuildShader(string.Join(", ", modes), repeats, alphaTest);
