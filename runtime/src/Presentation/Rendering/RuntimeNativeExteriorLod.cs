@@ -107,6 +107,19 @@ internal partial class RuntimeNativeExteriorLod : Node3D
         GD.Print($"OPENNV_NATIVE_LOD_PREPARED selected={_selected.Count} resident={_cache.Count} " +
             $"failed={_failed.Count} terrainCover={_completeTerrainCover} objectCover={_completeObjectCover} " +
             $"sourceFailures={_errors.Count} parity=unverified");
+        var objectReady = _cache.Where(pair => pair.Value.Objects is not null && pair.Value.ObjectsComplete)
+            .Select(pair => pair.Key).ToHashSet();
+        var objectUncovered = _selected.Where(block => _catalog.ResidentCover([block], objectReady).Count == 0).ToArray();
+        var objectSources = _catalog.Blocks.Where(block => block.Objects is not null).ToArray();
+        var objectBearingSelected = _selected.Where(selected => objectSources.Any(source =>
+            source.Contains(selected) || selected.Contains(source))).ToArray();
+        var objectBearingUncovered = objectBearingSelected.Where(block =>
+            _catalog.ResidentCover([block], objectReady).Count == 0).ToArray();
+        GD.Print($"OPENNV_NATIVE_LOD_OBJECT_COVER selected={_selected.Count} objectReady={objectReady.Count} " +
+            $"uncovered={objectUncovered.Length} sample={string.Join(',', objectUncovered.Take(4).Select(block => $"{block.Level}:{block.X}:{block.Y}"))} " +
+            $"sources={objectSources.Length} bearingSelected={objectBearingSelected.Length} bearingUncovered={objectBearingUncovered.Length} " +
+            $"readyByLevel={string.Join(',', objectReady.GroupBy(block => block.Level).OrderBy(group => group.Key).Select(group => $"{group.Key}:{group.Count()}"))} " +
+            $"uncoveredByLevel={string.Join(',', objectUncovered.GroupBy(block => block.Level).OrderBy(group => group.Key).Select(group => $"{group.Key}:{group.Count()}"))}");
     }
 
     public override void _Process(double delta)
