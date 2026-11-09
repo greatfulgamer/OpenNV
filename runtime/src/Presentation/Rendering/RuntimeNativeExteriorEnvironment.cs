@@ -22,6 +22,8 @@ internal partial class RuntimeNativeExteriorEnvironment : Node
     private float _lastHour = -1;
     private Vector3 _ambient, _fog, _range;
     private bool _lightingBound;
+    private bool _underwater;
+    private float _underwaterDepth;
     private float _shadowDistance = 100;
     private bool _useSkyShader;
     private bool _suppressSky;
@@ -194,6 +196,18 @@ internal partial class RuntimeNativeExteriorEnvironment : Node
         },
     };
 
+    internal void SetUnderwater(bool underwater, float depthMeters)
+    {
+        depthMeters = Mathf.Max(0.0f, depthMeters);
+        if (underwater == _underwater && Mathf.Abs(depthMeters - _underwaterDepth) < 1.0f) return;
+        _underwater = underwater;
+        _underwaterDepth = depthMeters;
+        // Force the next Sample to republish retail fog after surfacing.
+        _lightingBound = false;
+        Sample();
+        SetMeta("opennv_underwater_fog", underwater);
+    }
+
     private void Sample()
     {
         var hour = _lastHour = _hour();
@@ -227,6 +241,14 @@ internal partial class RuntimeNativeExteriorEnvironment : Node
         _environment.FogDepthBegin = Math.Max(0, near * _units);
         _environment.FogDepthEnd = far * _units;
         _environment.FogDepthCurve = power;
+        if (_underwater)
+        {
+            var depthMeters = Mathf.Clamp(_underwaterDepth, 0.0f, 250.0f);
+            _environment.FogLightColor = new Color(0.02f, 0.13f, 0.16f);
+            _environment.FogDepthBegin = 0.0f;
+            _environment.FogDepthEnd = Mathf.Clamp(22.0f - depthMeters * 0.25f, 5.0f, 22.0f);
+            _environment.FogDepthCurve = 1.4f;
+        }
         var nextAmbient = new Vector3(ambient.R, ambient.G, ambient.B);
         var nextFog = new Vector3(fog.R, fog.G, fog.B);
         var nextRange = new Vector3(near, far, power);
@@ -234,6 +256,15 @@ internal partial class RuntimeNativeExteriorEnvironment : Node
         {
             _ambient = nextAmbient; _fog = nextFog; _range = nextRange; _lightingBound = true;
             NativeNifMaterialEnvironment.PublishExterior(_ambient, _fog, _range, _units);
+        }
+        if (_underwater)
+        {
+            // Retail lighting materials read near/far/power in game units.
+            var depthMeters = Mathf.Clamp(_underwaterDepth, 0.0f, 250.0f);
+            var farGameUnits = Mathf.Clamp((22.0f - depthMeters * 0.25f) / _units, 300.0f, 2200.0f);
+            NativeNifMaterialEnvironment.PublishExterior(_ambient,
+                new Vector3(0.02f, 0.13f, 0.16f),
+                new Vector3(0.0f, farGameUnits, 1.4f), _units);
         }
         SetMeta("opennv_source_weather", weather.Form.ToString());
     }

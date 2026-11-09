@@ -541,7 +541,9 @@ public partial class RuntimeCoordinator
                 return heights.TryGetValue((gx, gy), out var level) ? level : null;
             },
             units,
-            now => NativeWaterMaterial().RenderPriority = now ? 1 : 0);
+            now => NativeWaterMaterial().RenderPriority = now ? 1 : 0,
+            (now, belowMeters) => root.GetNodeOrNull<RuntimeNativeExteriorEnvironment>("ExteriorSkyOwner")
+                ?.SetUnderwater(now, belowMeters));
         var waterSubdivisions = EnvironmentTier() switch { "low" => 8, "medium" => 16, _ => 32 };
         foreach (var cell in grid.Cells)
         {

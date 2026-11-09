@@ -9,14 +9,17 @@ internal partial class RuntimeNativeUnderwater : CanvasLayer
     private Func<Vector3>? _camera;
     private Func<Vector3, float?>? _heightAt;
     private Action<bool>? _underwaterChanged;
+    private Action<bool, float>? _underwaterState;
     private float _units = 1.0f;
     private bool _wasUnderwater;
 
-    internal void Configure(Func<Vector3> camera, Func<Vector3, float?> heightAt, float units, Action<bool>? underwaterChanged = null)
+    internal void Configure(Func<Vector3> camera, Func<Vector3, float?> heightAt, float units,
+        Action<bool>? underwaterChanged = null, Action<bool, float>? underwaterState = null)
     {
         _camera = camera;
         _heightAt = heightAt;
         _underwaterChanged = underwaterChanged;
+        _underwaterState = underwaterState;
         _units = units;
     }
 
@@ -54,6 +57,7 @@ internal partial class RuntimeNativeUnderwater : CanvasLayer
             GD.Print($"OPENNV_UNDERWATER visible={underwater} belowGameUnits={below:F1}");
             _underwaterChanged?.Invoke(underwater);
         }
+        _underwaterState?.Invoke(underwater, below * _units);
         _tint.Visible = underwater;
         if (underwater)
         {
