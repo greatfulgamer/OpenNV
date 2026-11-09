@@ -172,13 +172,23 @@ internal sealed partial class FalloutNifFile
             }
         }
         var rootCount = cursor.ReadCount32("root count", MaximumTableEntries);
-        if (cursor.Remaining != checked(rootCount * sizeof(int)))
+        var rootBytes = checked(rootCount * sizeof(int));
+        if (cursor.Remaining < rootBytes)
             throw new InvalidDataException("Fallout NIF footer root table size is invalid.");
         var roots = new int[rootCount];
         for (var index = 0; index < roots.Length; ++index)
         {
             roots[index] = cursor.ReadInt32($"root {index}");
             RequireReference(roots[index], blocks.Length, $"root {index}", allowNull: false);
+        }
+        // Some exporters (LODGen/xLODGen) zero-pad after the root table.
+        // Accept that padding, but never arbitrary trailing data.
+        if (cursor.Remaining > 0)
+        {
+            var paddingBytes = cursor.Remaining;
+            for (var index = 0; index < paddingBytes; ++index)
+                if (cursor.ReadByte("footer padding") != 0)
+                    throw new InvalidDataException("Fallout NIF footer padding is not zero.");
         }
         cursor.RequireEnd();
         return new FalloutNifFile(payload, fileVersion, userVersion2, strings, blocks, roots, observe);

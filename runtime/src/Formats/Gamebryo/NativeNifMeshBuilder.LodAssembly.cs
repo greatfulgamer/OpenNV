@@ -16,7 +16,7 @@ internal static partial class RuntimeNativeNifMeshBuilder
         private bool _complete;
 
         internal LodAssembly(FalloutNifFile source, float units, RuntimeLiveContentSource content,
-            Action<FalloutNifGeometry>? omitted)
+            Action<FalloutNifGeometry>? omitted = null)
         {
             if (!float.IsFinite(units) || units <= 0) throw new ArgumentOutOfRangeException(nameof(units));
             // Deferred hierarchy construction is valid for static LOD only.
@@ -39,15 +39,40 @@ internal static partial class RuntimeNativeNifMeshBuilder
                 else if (block.TypeName.EndsWith("Node", StringComparison.Ordinal) || block.TypeName == "NiParticleSystem")
                     throw new NotSupportedException($"Distant hierarchy requires a static owner for {block.TypeName}.");
             }
-            _state = new(source, units, null, contentSource: content)
+            // LODGen emits shapes that share one shader/texture set: some shapes
+            // carry no property block. Bind those to a donor material from the
+            // same NIF instead of dropping the draw. Pass an explicit `omitted`
+            // observer to retain the legacy omit-and-report behavior (audits).
+            var bindPropertyFree = omitted is null;
+            Material? fallbackMaterial = null;
+            Material? MaterialOverride(FalloutNifFile nif, FalloutNifGeometry geometry)
             {
-                UnboundPropertyFreeLod = omitted,
-                DeferStaticChild = (parent, block, markers) => _pending.Enqueue((parent, block, markers))
-            };
+                if (geometry.Properties.Any(index => index != -1)) return null;
+                if (fallbackMaterial is not null) return fallbackMaterial;
+                var donor = nif.Blocks
+                    .Where(block => block.TypeName is "NiTriShape" or "NiTriStrips" or "BSSegmentedTriShape")
+                    .Select(block => nif.ReadGeometry(block.Index))
+                    .FirstOrDefault(candidate => candidate.Properties.Any(index => index != -1));
+                if (donor is null) return null;
+                fallbackMaterial = RuntimeNativeNifMeshBuilder.BuildMaterial(
+                    nif, geometry with { Properties = donor.Properties }, null, null, content);
+                return fallbackMaterial;
+            }
+            _state = bindPropertyFree
+                ? new(source, units, null, materialOverride: MaterialOverride, contentSource: content)
+                {
+                    AllowDegenerateLodGeometry = true,
+                    DeferStaticChild = (parent, block, markers) => _pending.Enqueue((parent, block, markers))
+                }
+                : new(source, units, null, contentSource: content)
+                {
+                    UnboundPropertyFreeLod = omitted,
+                    DeferStaticChild = (parent, block, markers) => _pending.Enqueue((parent, block, markers))
+                };
             _root = new Node3D { Name = "NativeNif" };
             _root.SetMeta("opennv_nif_fixed_strings", source.Strings.ToArray());
             foreach (var block in source.Roots)
-                if (omitted is not null && source.Blocks[block].TypeName is ("NiTriShape" or "NiTriStrips" or "BSSegmentedTriShape") &&
+                if (!bindPropertyFree && omitted is not null && source.Blocks[block].TypeName is ("NiTriShape" or "NiTriStrips" or "BSSegmentedTriShape") &&
                     source.ReadGeometry(block) is { } geometry && geometry.Properties.All(index => index == -1)) omitted(geometry);
                 else _pending.Enqueue((_root, block, false));
         }

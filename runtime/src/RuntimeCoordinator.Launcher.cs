@@ -94,7 +94,13 @@ public partial class RuntimeCoordinator
             throw new InvalidOperationException("Disable selected mods for vanilla play, or explicitly select installed content.");
         var mod = selection?.Resolve(baseRoot);
         var vanilla = contentSelection == "vanilla";
-        var plugins = vanilla ? RuntimeLiveContentSource.ResolveVanillaPlugins(baseRoot) : mod?.ActivePlugins;
+        // Resource-only packs (texture/mesh/LOD layers) contribute no plugins,
+        // so keep the vanilla plugin order. Otherwise the asset layer changes
+        // the identity hash and invalidates existing campaign saves.
+        var pluginMods = mod?.Mods.Any(m => FalloutModCatalog.Get(m.Id).PluginChoices.Count > 0) ?? false;
+        var plugins = vanilla || (mod is not null && !pluginMods)
+            ? RuntimeLiveContentSource.ResolveVanillaPlugins(baseRoot)
+            : mod?.ActivePlugins;
         RuntimeLiveContentSource.Configure(baseRoot, campaign, mod?.ContentRoots.Skip(1).ToArray(), plugins, mod?.Settings,
             includeImplicitPlugins: !vanilla);
         var source = RuntimeLiveContentSource.Current!;

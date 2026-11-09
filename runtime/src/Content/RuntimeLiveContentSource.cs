@@ -36,6 +36,7 @@ internal sealed partial class RuntimeLiveContentSource : IDisposable
         string game,
         string campaign,
         string stackId,
+        string saveStackId,
         string edition,
         string engineBuild,
         string contentVersion,
@@ -52,7 +53,7 @@ internal sealed partial class RuntimeLiveContentSource : IDisposable
         Edition = edition;
         EngineBuild = engineBuild;
         ContentVersion = contentVersion;
-        SaveCompatibilityId = $"{edition}:{stackId}";
+        SaveCompatibilityId = $"{edition}:{saveStackId}";
         SupportedCampaigns = [campaign];
         RequiredSemanticExtensions = [];
         CleanRoomSemanticCapabilities = [];
@@ -189,7 +190,13 @@ internal sealed partial class RuntimeLiveContentSource : IDisposable
 
         var edition = campaign;
         var build = installation.Game == NativeGame.Fallout3 ? "1.7.0.4" : "1.4.0.525";
-        var identity = ComputeLiveIdentity(plugins, archives, layers.Roots.Count > 1 ? layers.Roots : []);
+        // Save compatibility is keyed by plugins + archives only. Resource-only
+        // layers (texture/mesh/LOD packs) must not invalidate existing saves;
+        // stacking them still changes StackId for provenance.
+        var saveIdentity = ComputeLiveIdentity(plugins, archives, []);
+        var identity = layers.Roots.Count > 1
+            ? ComputeLiveIdentity(plugins, archives, layers.Roots)
+            : saveIdentity;
         return new RuntimeLiveContentSource(
             installation.ContentRoot,
             plugins,
@@ -197,6 +204,7 @@ internal sealed partial class RuntimeLiveContentSource : IDisposable
             campaign,
             campaign,
             identity,
+            saveIdentity,
             edition,
             build,
             build,

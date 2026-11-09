@@ -18,6 +18,7 @@ internal static class FalloutModCatalog
         new("uncut-wasteland", "Uncut Wasteland", ["Uncut Wasteland.esp"]),
         new("living-desert", "The Living Desert", ["TLD_Travelers.esm"]),
         new("nmc", "NMC Texture Pack", []),
+        new("mojave-lod", "Betsy Mojave LOD Layer", []),
         new("eve", "EVE", ["EVE FNV - ALL DLC.esp", "EVE FNV - NO GRA.esp", "EVE FNV - NO DLC.esp"]),
         new("nevada-skies", "Nevada Skies", ["NevadaSkies.esp"]),
         new("bounties", "New Vegas Bounties I", ["NewVegasBounties.esp"]),

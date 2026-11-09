@@ -232,14 +232,9 @@ internal partial class RuntimeNativeExteriorLod : Node3D
                 RuntimeNativeNifMeshBuilder.LodAssembly? assembly = null;
                 try
                 {
-                    Action<FalloutNifGeometry>? omitted = isTerrain ? geometry =>
-                    {
-                        complete = false;
-                        Report($"{tile.Path}#geometry{geometry.Block.Index}",
-                            new NotSupportedException("Property-free LOD geometry requires its world material owner; this draw remains missing."));
-                    }
-                    : null;
-                    assembly = new(tile.Source, _units, _source, omitted);
+                    // Property-free shapes are bound to a donor material from
+                    // the same NIF by LodAssembly, so the tile stays complete.
+                    assembly = new(tile.Source, _units, _source);
                 }
                 catch (Exception error) { Report(tile.Path!, error); }
                 if (assembly is null) continue;

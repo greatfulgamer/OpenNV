@@ -337,6 +337,7 @@ internal static partial class RuntimeNativeNifMeshBuilder
         internal Transform3D? RigidFaceBind { get; set; }
         internal string? SelectedGeometryName { get; init; }
         internal Action<FalloutNifGeometry>? UnboundPropertyFreeLod { get; init; }
+        internal bool AllowDegenerateLodGeometry { get; init; }
         internal Action<Node3D, int, bool>? DeferStaticChild { get; init; }
         private readonly FalloutNifFile _source;
         private readonly float _unitsToMetres;
@@ -1441,8 +1442,25 @@ internal static partial class RuntimeNativeNifMeshBuilder
 
             var indices = FalloutNifTriangleWinding.ToGodotIndices(data.Triangles);
             if (indices.Length == 0)
-                throw new InvalidDataException(
-                    $"NIF geometry data {data.Block.Index} contains no non-degenerate triangles.");
+            {
+                // LODGen emits empty shapes for cells with no visible geometry.
+                // Skip the draw instead of failing the whole tile.
+                if (!AllowDegenerateLodGeometry)
+                    throw new InvalidDataException(
+                        $"NIF geometry data {data.Block.Index} contains no non-degenerate triangles.");
+                var empty = new MeshInstance3D
+                {
+                    Name = SourceName(source.Name, source.Block.Index),
+                    Transform = ConvertTransform(source.Transform),
+                    Visible = (source.Flags & HiddenFlag) == 0,
+                    Mesh = new ArrayMesh(),
+                };
+                empty.SetMeta("opennv_nif_geometry_block", source.Block.Index);
+                empty.SetMeta("opennv_nif_empty_geometry", true);
+                _nodes.Add(source.Block.Index, empty);
+                NodeCount++;
+                return empty;
+            }
             arrays[(int)Mesh.ArrayType.Index] = indices;
             var mesh = new ArrayMesh();
             mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arrays,
