@@ -5,6 +5,7 @@ namespace OpenNV.Runtime.Presentation.Rendering;
 internal partial class RuntimeNativeUnderwater : CanvasLayer
 {
     private ColorRect? _tint;
+    private ShaderMaterial? _material;
     private Func<Vector3>? _camera;
     private Func<Vector3, float?>? _heightAt;
     private Action<bool>? _underwaterChanged;
@@ -22,10 +23,12 @@ internal partial class RuntimeNativeUnderwater : CanvasLayer
     public override void _Ready()
     {
         Layer = 50;
+        _material = new ShaderMaterial { Shader = GD.Load<Shader>("res://shaders/underwater.gdshader") };
         _tint = new ColorRect
         {
             Name = "UnderwaterTint",
-            Color = new Color(0.03f, 0.12f, 0.16f, 0.55f),
+            Color = Colors.White,
+            Material = _material,
             MouseFilter = Control.MouseFilterEnum.Ignore,
             Visible = false,
         };
@@ -54,8 +57,8 @@ internal partial class RuntimeNativeUnderwater : CanvasLayer
         _tint.Visible = underwater;
         if (underwater)
         {
-            var alpha = Mathf.Clamp(0.25f + below * _units * 0.02f, 0.25f, 0.60f);
-            _tint.Color = new Color(0.03f, 0.12f, 0.16f, alpha);
+            var alpha = Mathf.Clamp(0.22f + below * _units * 0.015f, 0.22f, 0.60f);
+            _material?.SetShaderParameter("depth_alpha", alpha);
         }
     }
 }
