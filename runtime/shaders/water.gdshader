@@ -29,8 +29,8 @@ uniform float refraction_blur = 6.0;
 
 // Tier ladder: 0 disables the effect, 1 is full quality.
 uniform float caustics_quality : hint_range(0.0, 1.0) = 0.70;
-uniform float caustics_strength = 0.50;
-uniform float caustics_scale = 0.5;
+uniform float caustics_strength = 0.38;
+uniform float caustics_scale = 0.65;
 uniform float ssr_quality : hint_range(0.0, 1.0) = 0.5;
 uniform float ssr_strength = 0.45;
 uniform float ssr_distance = 32.0;
@@ -137,12 +137,11 @@ void fragment() {
 
 		float grazing = 1.0 - clamp(abs(normalize(VIEW).y), 0.0, 1.0);
 		float fresnel = pow(grazing, fresnel_power);
-		vec3 color = mix(base, sky_color, clamp(fresnel * reflection_strength, 0.0, 0.7));
+		vec3 reflection = sky_color;
 
-		// Cheap screen-space reflection: project the mirrored ray one stride
-		// into the opaque color buffer and blend it in by fresnel.
-		float ssr_valid = 0.0;
-		vec3 ssr_color = sky_color;
+		// Cheap screen-space reflection: project the mirrored ray into the
+		// opaque color buffer and fold it into the sky reflection once, so
+		// fresnel is not applied twice. A small blur keeps it from shimmering.
 		if (ssr_quality > 0.0) {
 			vec3 view_position = (VIEW_MATRIX * vec4(world_uv.xyz, 1.0)).xyz;
 			vec3 view_normal = normalize((VIEW_MATRIX * vec4(normal, 0.0)).xyz);
@@ -150,11 +149,13 @@ void fragment() {
 			vec4 ssr_clip = PROJECTION_MATRIX * vec4(view_position + view_reflected * ssr_distance, 1.0);
 			if (ssr_clip.w > 0.0) {
 				vec2 ssr_uv = ssr_clip.xy / ssr_clip.w * 0.5 + 0.5;
-				ssr_valid = step(0.0, ssr_uv.x) * step(ssr_uv.x, 1.0) * step(0.0, ssr_uv.y) * step(ssr_uv.y, 1.0);
-				ssr_color = sample_refraction(clamp(ssr_uv, vec2(0.0), vec2(1.0)), 2.0 * ssr_quality);
+				float ssr_valid = step(0.0, ssr_uv.x) * step(ssr_uv.x, 1.0) *
+					step(0.0, ssr_uv.y) * step(ssr_uv.y, 1.0);
+				vec3 ssr_color = sample_refraction(clamp(ssr_uv, vec2(0.0), vec2(1.0)), 3.0 * ssr_quality);
+				reflection = mix(sky_color, ssr_color, clamp(ssr_strength * ssr_quality * ssr_valid, 0.0, 1.0));
 			}
 		}
-		color = mix(color, ssr_color, clamp(ssr_strength * ssr_quality * fresnel * ssr_valid, 0.0, 0.85));
+		vec3 color = mix(base, reflection, clamp(fresnel * reflection_strength, 0.0, 0.85));
 
 		vec3 view_dir = normalize(-VIEW);
 		vec3 sun_dir = normalize(sun_direction);

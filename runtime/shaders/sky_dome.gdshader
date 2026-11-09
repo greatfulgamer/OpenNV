@@ -146,7 +146,7 @@ void fragment() {
         float cirrus = cloud_density(uv2, cirrus_coverage, 0.10, 0.60, 0.6, cloud_detail) * cirrus_opacity;
 
         vec3 cirrus_col = mix(cloud_shadow_color, cloud_color.rgb, 0.65) * cloud_brightness;
-        col = mix(col, cirrus_col, cirrus * horizon_fade * 0.85);
+        col = mix(col, cirrus_col, cirrus * pow(horizon_fade, 1.4) * 0.85);
 
         vec3 cloud_shade = mix(cloud_shadow_color, cloud_color.rgb, smoothstep(0.0, 0.75, cumulus));
         vec3 cloud_final = cloud_shade * cloud_brightness;
