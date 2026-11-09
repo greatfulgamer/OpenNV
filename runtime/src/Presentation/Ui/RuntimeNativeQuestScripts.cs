@@ -26,6 +26,9 @@ internal sealed partial class RuntimeNativeQuestScripts : Node
         _ => throw new NotSupportedException("Script sound reference presentation has no world owner.");
     internal float SoundUnitsToMetres { get; set; }
     internal FalloutNewGameBootstrap? Bootstrap { get; set; }
+    // Debug/capture automation: answer source message boxes with their first
+    // button instead of waiting for foreground input.
+    internal bool AutoAcceptMessages { get; set; }
     internal string? StartupError => _error;
     internal object State => Observe(detailed: true);
     internal object Observe(bool detailed) => new
@@ -147,7 +150,7 @@ internal sealed partial class RuntimeNativeQuestScripts : Node
             message = message.ResolveButtons(_records, condition => (EvaluateMessageCondition ??
                 throw new NotSupportedException("Message condition has no gameplay owner."))(condition));
             _current = message;
-            _layer.AddChild(new NativeOwnedMessageMenu(message, _records, choice =>
+            void Choose(int choice)
             {
                 // A removed canvas may still have an input callback queued.
                 // It must never close or answer its replacement.
@@ -157,8 +160,17 @@ internal sealed partial class RuntimeNativeQuestScripts : Node
                 GD.Print($"OPENNV_SOURCE_MESSAGE_{(accepted ? "ACCEPT" : "SUPERSEDED")} source={message.Form} choice={choice}");
                 CloseMessage();
                 if (Scripts.TryTakeMessage(out var next)) Show(next!);
-            }, error => Fail(message, error)));
+            }
+            _layer.AddChild(new NativeOwnedMessageMenu(message, _records, Choose, error => Fail(message, error)));
             GD.Print($"OPENNV_SOURCE_MESSAGE_OPEN source={message.Form}");
+            if (AutoAcceptMessages)
+            {
+                var request = message.Request;
+                GetTree().CreateTimer(0.2).Timeout += () =>
+                {
+                    if (_current?.Request == request) Choose(0);
+                };
+            }
         }
         catch (Exception error)
         {

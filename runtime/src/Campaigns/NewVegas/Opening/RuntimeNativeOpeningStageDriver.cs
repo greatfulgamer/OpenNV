@@ -89,6 +89,12 @@ internal partial class RuntimeNativeOpeningStageDriver : Node
     internal FalloutFastTravel FastTravel { get; } = new();
     internal void EnterWorldCell(FalloutFormKey cell) => _activeCell = cell;
     internal void RequestWorldSave() => _saveRequested = true;
+    // Automation/debug starts skip retail intro movies so the authored source
+    // script phase can settle without foreground input.
+    internal bool SkipMovies { get; set; }
+    // Debug capture mode: the authored damage path is skipped so environment
+    // references can be observed without hostile actors ending the session.
+    internal bool GodMode { get; set; }
     internal bool HasCampaignSave => File.Exists(_savePath);
     internal string PlayerName => _playerName;
     internal int PlayerLevel => SourcePlayerLevel;
@@ -98,6 +104,7 @@ internal partial class RuntimeNativeOpeningStageDriver : Node
     private FalloutActorDefenseResolver? _incomingDefense;
     internal void DamagePlayer(FalloutWeaponDamage damage, byte part)
     {
+        if (GodMode) return;
         _scripts.References?.BeforeActorHit(_pluginStack.RuntimeFormKey(0x14));
         _incomingDefense ??= new(_pluginStack);
         var armor = _inventory.Equipped.Select(_pluginStack.RuntimeFormKey)

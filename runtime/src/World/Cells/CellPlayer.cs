@@ -1079,16 +1079,23 @@ internal partial class CellPlayer : CharacterBody3D
             return stick.Length() < _configuration.Xr.MovementDeadzone ? Vector2.Zero : stick;
         }
         var input = _configuration.Player.DesktopInput;
-        return Input.GetVector(
-            input.MoveLeft.Action,
-            input.MoveRight.Action,
-            input.MoveBackward.Action,
-            input.MoveForward.Action);
+        var forward = 0.0f;
+        if (Input.IsActionPressed(input.MoveForward.Action)) forward += 1.0f;
+        if (Input.IsActionPressed(input.MoveBackward.Action)) forward -= 1.0f;
+        return new Vector2(0.0f, forward);
     }
 
     private void PollDesktopActions()
     {
         var input = _configuration.Player.DesktopInput;
+        if (_lookEnabled)
+        {
+            var keyboardTurn = 0.0f;
+            if (Input.IsActionPressed(input.MoveLeft.Action)) keyboardTurn += 1.0f;
+            if (Input.IsActionPressed(input.MoveRight.Action)) keyboardTurn -= 1.0f;
+            if (keyboardTurn != 0.0f)
+                RotateY(keyboardTurn * Mathf.DegToRad(120.0f) * (float)GetPhysicsProcessDeltaTime());
+        }
         if (_session!.IsPipBoyOpen)
         {
             DropHeldPickup();

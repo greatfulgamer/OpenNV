@@ -9,10 +9,14 @@ internal static class RetailImageSpaceRenderer
 {
     internal static Application CreateFromSource(FalloutImageSpace source,
         RetailImageSpaceConfiguration configuration, CaptureConfiguration capture,
-        ColorTransferConfiguration outputTransfer)
+        ColorTransferConfiguration outputTransfer, bool neutralGrade = false)
     {
-        var cinematic = new Vector4(source.Cinematic.X, source.Cinematic.Y, source.Cinematic.Z, source.Cinematic.W);
-        var tint = new Vector4(source.Tint.X, source.Tint.Y, source.Tint.Z, source.Tint.W);
+        var cinematic = neutralGrade
+            ? new Vector4(1.0f, source.Cinematic.Y, 1.0f, 1.0f)
+            : new Vector4(source.Cinematic.X, source.Cinematic.Y, source.Cinematic.Z, source.Cinematic.W);
+        var tint = neutralGrade
+            ? new Vector4(1.0f, 1.0f, 1.0f, 0.0f)
+            : new Vector4(source.Tint.X, source.Tint.Y, source.Tint.Z, source.Tint.W);
         var effect = new RetailHdrCompositorEffect(source.TargetLuminance, 1, cinematic, tint, Vector4.Zero,
             configuration, capture, outputTransfer, runtimeAdaptation: true,
             FalloutImageSpacePrograms.Read(RuntimeLiveContentSource.Current ??

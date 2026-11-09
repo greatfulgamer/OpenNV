@@ -90,7 +90,7 @@ public partial class RuntimeCoordinator
         var records = _nativePluginStack!;
         using var cancellation = new CancellationTokenSource();
         var token = cancellation.Token;
-        var pending = new Queue<Task<FalloutLandscapeTransport>>();
+        var pending = new Queue<Task<FalloutLandscapeTransport?>>();
         var next = 0;
         var total = Stopwatch.GetTimestamp();
         var slice = total;
@@ -108,6 +108,7 @@ public partial class RuntimeCoordinator
                     {
                         token.ThrowIfCancellationRequested();
                         var landscape = FalloutLandscapeTransportResolver.ResolveCell(records, cell, grid.PersistentCell);
+                        if (landscape is null) return null;
                         foreach (var path in landscape.Textures.Values.SelectMany(texture =>
                             new[] { texture.DiffusePath, texture.NormalPath }).OfType<string>().Distinct(StringComparer.OrdinalIgnoreCase))
                         {
@@ -118,6 +119,7 @@ public partial class RuntimeCoordinator
                     }, token));
                 }
                 var source = await pending.Dequeue();
+                if (source is null) continue;
                 if (_nativeSessionTransitioning || _retiringNativeSession)
                     throw new OperationCanceledException("Landscape construction session retired.");
                 var started = Stopwatch.GetTimestamp();
@@ -130,6 +132,7 @@ public partial class RuntimeCoordinator
             }
             if (_nativeSessionTransitioning || _retiringNativeSession)
                 throw new OperationCanceledException("Landscape construction session retired.");
+            AddExteriorWater(root, grid);
             CompleteExteriorLandscape(root, grid);
             GD.Print($"OPENNV_NATIVE_LAND_BUILD cells={grid.Cells.Count} elapsedMs={Stopwatch.GetElapsedTime(total).TotalMilliseconds:F1} " +
                 $"maxCellMs={maximumCellMilliseconds:F1} sourceReads=bounded-workers nativePublication=main-thread");

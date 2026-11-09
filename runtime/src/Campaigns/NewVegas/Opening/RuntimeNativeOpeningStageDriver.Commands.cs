@@ -146,6 +146,7 @@ internal partial class RuntimeNativeOpeningStageDriver
                     CompleteBlocker("playbink");
                 }).CallDeferred());
                 AddChild(movie);
+                if (SkipMovies) movie.Skip();
                 break;
             case "enablefasttravel" or "enablefast" when parts.Length == 1:
                 FastTravel.Apply(arguments);
@@ -178,13 +179,38 @@ internal partial class RuntimeNativeOpeningStageDriver
         GD.Print($"OPENNV_NATIVE_CAMPAIGN_SAVED quest={QuestEditorId} stage={Stage} creationComplete={state.CharacterCreationComplete} save={_savePath}");
     }
 
-    private FalloutNativeCampaignState CaptureCurrentState(FalloutFormKey activeCell)
+    // Debug waypoint imports replace the authored start before the opening
+    // menus settle, so the ordinary manual-save blocker (which names the open
+    // menu) must not suppress the first save. World and player state are still
+    // captured and validated through the normal campaign-save path.
+    internal FalloutNativeCampaignState PersistWaypointState(
+        FalloutFormKey capturedCell, FalloutFormKey targetCell,
+        IReadOnlyList<float> targetPosition, IReadOnlyList<float> targetRotation)
+    {
+        var state = CaptureCurrentState(capturedCell, bypassSaveBlocker: true);
+        // The authored opening script relocates the player to its own start, so
+        // the captured world anchor is replaced with the imported waypoint
+        // after capture; WithWorldState revalidates the whole campaign state.
+        state = FalloutNativeCampaignSave.WithWorldState(
+            state, targetCell, targetPosition, targetRotation, state.PlayerViewPitchRadians ?? 0);
+        FalloutNativeCampaignSave.Write(_savePath, state);
+        _stage200Saved = state.CharacterCreationComplete;
+        _saveRequested = false;
+        _activeCell = targetCell;
+        GD.Print(
+            $"OPENNV_NATIVE_WAYPOINT_SAVED quest={QuestEditorId} stage={Stage} " +
+            $"creationComplete={state.CharacterCreationComplete} captured={capturedCell} " +
+            $"cell={targetCell} save={_savePath}");
+        return state;
+    }
+
+    private FalloutNativeCampaignState CaptureCurrentState(
+        FalloutFormKey activeCell, bool bypassSaveBlocker = false)
     {
         if (Vitals.HitPoints <= 0)
             throw new InvalidOperationException("Cannot replace a playable save after player death.");
         _scripts.ScriptManualSaves.RequireCapture();
-        _scripts.References!.PlayerMoves.RequireSettled();
-        if (SaveContinuationBlocker is { } blocker)
+        if (!bypassSaveBlocker && SaveContinuationBlocker is { } blocker)
             throw new NotSupportedException($"Saving {blocker} requires continuation state.");
         _playerAbilities.Synchronize();
         var vitals = Vitals;

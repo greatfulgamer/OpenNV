@@ -50,7 +50,9 @@ public partial class NativeLandscapeTransportAudit : Node3D
             var terrain = new List<RuntimeNativeLandscapeTransport>();
             foreach (var cell in grid.Cells)
             {
-                var land = RuntimeNativeLandscapeTransportBuilder.Build(FalloutLandscapeTransportResolver.ResolveCell(records, cell, grid.PersistentCell), units, textureCache);
+                var landSource = FalloutLandscapeTransportResolver.ResolveCell(records, cell, grid.PersistentCell);
+                if (landSource is null) continue;
+                var land = RuntimeNativeLandscapeTransportBuilder.Build(landSource, units, textureCache);
                 terrain.Add(land); AddChild(land);
                 if (!land.Geometry.Visible || Enumerable.Range(0, 4).Any(surface =>
                     land.Geometry.Mesh.SurfaceGetMaterial(surface) is not ShaderMaterial material ||

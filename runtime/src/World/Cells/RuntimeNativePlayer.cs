@@ -85,6 +85,9 @@ internal partial class RuntimeNativePlayer : CharacterBody3D
     }
 
     internal Camera3D Camera => _camera;
+    // Debug capture: keep the restored pose (and camera) fixed while the
+    // environment is observed, including above water surfaces.
+    internal bool Freeze { get; set; }
     internal float ViewPitchRadians => _pitchRadians;
     internal FalloutActorActivityState Activity { get; } = new();
     internal bool RolloverTextEnabled { get; private set; } = true;
@@ -368,6 +371,7 @@ internal partial class RuntimeNativePlayer : CharacterBody3D
     public override void _PhysicsProcess(double delta)
     {
         PublishXrPointer();
+        if (Freeze) return;
         if (_xr is not null && GetTree().Paused) return;
         AdvanceExplosionExposure(delta);
         if (_furniturePhase != 0) { AdvanceFurniture(delta); return; }

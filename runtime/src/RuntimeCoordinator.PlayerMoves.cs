@@ -12,6 +12,18 @@ public partial class RuntimeCoordinator
             _nativeReferences is not { } references || references.PlayerMoves.Next is not { } move ||
             _nativePlayer is not { } player || _nativeOpeningStageDriver is not { } driver || _nativeActiveCell is not { } active)
             return;
+        if (_waypointAnchorLock)
+        {
+            // An imported waypoint owns the player anchor until its save is
+            // committed; the authored opening move must not replace it.
+            while (references.PlayerMoves.Next is { } pending)
+            {
+                references.PlayerMoves.Complete(pending);
+                GD.Print($"OPENNV_WAYPOINT_MOVE_SUPPRESSED source={pending.Source} target={pending.Destination} " +
+                    $"from={active.Cell.FormKey}");
+            }
+            return;
+        }
         _nativePlayerMoveRead = ConsumeNativePlayerMove(references, player, driver, active, move);
     }
 

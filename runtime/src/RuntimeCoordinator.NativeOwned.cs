@@ -281,7 +281,8 @@ public partial class RuntimeCoordinator
         var source = RuntimeLiveContentSource.Current ??
             throw new InvalidOperationException("Live retail source was not configured.");
         SetLoadingStatus("Reading game data");
-        if (DisplayServer.GetName() == "headless" || _options.ContainsKey("new-game"))
+        var continueGame = _options.ContainsKey("continue");
+        if (DisplayServer.GetName() == "headless" || _options.ContainsKey("new-game") || continueGame)
         {
             _nativeMenuRead = Task.Run(() => IndexNativeLiveStack(source.PluginSources));
             await _nativeMenuRead;
@@ -293,6 +294,16 @@ public partial class RuntimeCoordinator
                     CreateNativeQuestScripts();
                     await BootstrapNativeNewGame();
                 }
+                _nativeMenuRead = LoadNativeInitialCell();
+                await _nativeMenuRead;
+            }
+            else if (continueGame)
+            {
+                if (_nativeOpeningRestore is null)
+                    throw new InvalidOperationException(
+                        "Continue has no valid campaign save at the configured --save-path.");
+                _nativeContinueOpening = true;
+                _nativeStartingGame = true;
                 _nativeMenuRead = LoadNativeInitialCell();
                 await _nativeMenuRead;
             }
@@ -556,6 +567,13 @@ public partial class RuntimeCoordinator
         _restoredNativeCheckpoint = _pendingCheckpointRestore;
         _pendingCheckpointRestore = null;
         _pendingSaveActivation?.Commit(); _pendingSaveActivation = null;
+        if (_options.TryGetValue("force-weather", out var weatherEditorId) &&
+            _nativePluginStack is { } weatherStack && _nativeSkyLighting is { } forcedSky)
+        {
+            var weather = FalloutDialogueTopic.Find(weatherStack, "WTHR", weatherEditorId);
+            forcedSky.ForceWeather(weather.FormKey, overrideWeather: true);
+            GD.Print($"OPENNV_FORCED_WEATHER edid={weatherEditorId} form={weather.FormKey}");
+        }
         DismissLoadingScreen();
     }
 
@@ -565,7 +583,20 @@ public partial class RuntimeCoordinator
             throw new InvalidOperationException("Live retail source was cleared during startup.");
         var stack = _nativePluginStack ??
             throw new InvalidOperationException("Native plugin stack was not indexed.");
-        var startupPlacement = _nativeContinueOpening ? null : _nativeBootstrap?.Placement();
+        var waypointPlacement = !_nativeContinueOpening &&
+            _options.TryGetValue("teleport-waypoint", out var waypointPath)
+                ? ResolveWaypointPlacement(stack, ResolveRuntimePath(waypointPath))
+                : null;
+        if (waypointPlacement is not null)
+        {
+            // The authored start move and prewarmed cell belong to the world the
+            // waypoint replaces; neither may leak into the teleported start.
+            _nativeReferences?.PlayerMoves.Clear();
+            _nativePrewarmedInitialCellRoot?.Free();
+            _nativePrewarmedInitialCellRoot = null;
+            _waypointAnchorLock = true;
+        }
+        var startupPlacement = _nativeContinueOpening ? null : waypointPlacement ?? _nativeBootstrap?.Placement();
         var cell = _nativeContinueOpening ? FalloutCellSceneReader.Read(stack, _nativeOpeningRestore!.State.ActiveCell) :
             startupPlacement is not null ? FalloutCellSceneReader.Read(stack, startupPlacement.Cell) :
             _nativeInitialCell ?? throw new InvalidOperationException("Native initial CELL was not decoded.");
@@ -655,6 +686,14 @@ public partial class RuntimeCoordinator
                 activeScene = grid.Scene;
             }
         }
+        if (grid is null && waypointPlacement is not null && activeScene.Cell.Worldspace is { } waypointWorld)
+        {
+            // A teleported exterior start owns the same resident grid and
+            // landscape as a continued exterior save.
+            position = waypointPlacement.Position;
+            grid = ResolveExterior(waypointWorld, position);
+            activeScene = grid.Scene;
+        }
         activeScene = _nativeReferences!.ComposeResidency(activeScene, _configuration.World.GameUnitsToMeters, grid?.Cells);
         if (grid is not null) grid = grid with { Scene = activeScene };
         _nativeSkyLighting?.EnterCell(activeScene.Cell, _nativeGlobals, position);
@@ -697,9 +736,43 @@ public partial class RuntimeCoordinator
             SetNativeActiveCell(root, activeScene);
             _nativeBootstrap?.AttachPlayerPackages(_nativeOpeningStageDriver!.AttachBootstrapPlayerPackage);
             if (_nativeQuestScripts is not null) _nativeQuestScripts.ActivateWorld(restore is not null);
-            if (startupPlacement is not null)
+            if (startupPlacement is not null && waypointPlacement is null)
                 _nativeReferences.PlayerMoves.Complete(_nativeReferences.PlayerMoves.Next ??
                     throw new InvalidOperationException("Initial player placement lost its queued source request."));
+            if (waypointPlacement is not null && _options.ContainsKey("save-on-load"))
+            {
+                // A source script phase is briefly in flight while the authored
+                // start settles; retry until the campaign-save writer accepts
+                // the world instead of losing the one requested save.
+                var targetPlacement = waypointPlacement;
+                var (waypointPosition, waypointRotation) = WaypointGodotPose(targetPlacement);
+                var saveAttempts = 0;
+                void TrySaveWaypoint()
+                {
+                    try
+                    {
+                        if (_nativeSessionTransitioning || _retiringNativeSession ||
+                            _nativeOpeningStageDriver is null || _nativeActiveCell is null) return;
+                        _nativeOpeningStageDriver.PersistWaypointState(
+                            _nativeActiveCell.Cell.FormKey, targetPlacement.Cell,
+                            waypointPosition, waypointRotation);
+                        _waypointAnchorLock = false;
+                    }
+                    catch (Exception error)
+                    {
+                        if (++saveAttempts >= 15)
+                        {
+                            GD.PushError($"OPENNV_WAYPOINT_SAVE_FAILED {error}");
+                            return;
+                        }
+                        var retry = GetTree().CreateTimer(2.0);
+                        retry.Timeout += TrySaveWaypoint;
+                    }
+                }
+                var saveTimer = GetTree().CreateTimer(1.0);
+                saveTimer.Timeout += TrySaveWaypoint;
+                GD.Print($"OPENNV_WAYPOINT_SAVE_REQUESTED cell={_nativeActiveCell?.Cell.FormKey}");
+            }
             AddNativeGameplayHud();
             if (grid is not null)
             {
@@ -726,6 +799,7 @@ public partial class RuntimeCoordinator
         scripts.EvaluateMessageCondition = condition => (_nativeOpeningStageDriver ??
             throw new InvalidOperationException("Message conditions have no player gameplay owner.")).EvaluateMessageCondition(condition);
         scripts.ActiveMenus = NativeActiveMenus;
+        scripts.AutoAcceptMessages = _options.ContainsKey("auto-accept-messages");
         scripts.SoundUnitsToMetres = _configuration.World.GameUnitsToMeters;
         scripts.SoundReference = reference => _nativePluginStack!.RuntimeFormId(reference) == 0x14 ? _nativePlayer :
             (_nativeReferencePresentation ?? throw new NotSupportedException("Script sound world presentation is not resident."))
@@ -1298,6 +1372,7 @@ public partial class RuntimeCoordinator
         var transform = startupPlacement is not null ? NativePlayerPlacementTransform(startupPlacement) :
             start is not null ? ReferenceTransform(start.Reference) : Transform3D.Identity;
         _nativePlayer = new RuntimeNativePlayer();
+        _nativePlayer.Freeze = _options.ContainsKey("freeze-player");
         _nativePlayer.CreateFurnitureBody = () => RuntimeNativeNpc.Create(
             (_nativeOpeningStageDriver ?? throw new InvalidOperationException("Player appearance owner is absent.")).PlayerAppearance
                 with
@@ -1350,6 +1425,8 @@ public partial class RuntimeCoordinator
             ReferencePresentation = () => _nativeReferencePresentation ??
                 throw new InvalidOperationException("Native reference presentation is absent."),
             SayToCompleted = receipt => _nativeOpeningStageDriver!.DispatchSpeechCompletion(receipt),
+            SkipMovies = _options.ContainsKey("skip-movies"),
+            GodMode = _options.ContainsKey("god-mode"),
         };
         _nativeOpeningStageDriver.Configure(
             _nativeOpeningTransitions ??
@@ -1446,7 +1523,8 @@ public partial class RuntimeCoordinator
         if (imageSpace is null) return null;
         var application = RetailImageSpaceRenderer.CreateFromSource(imageSpace,
             _configuration.FalloutEnvironment.ImageSpace, _configuration.Capture,
-            _configuration.ActorCompiler.FaceGenMaterial.RuntimeAlbedoTransfer);
+            _configuration.ActorCompiler.FaceGenMaterial.RuntimeAlbedoTransfer,
+            neutralGrade: _options.ContainsKey("sky-shader"));
         var presenter = new RuntimeNativeImageSpace();
         presenter.Configure(imageSpace, _nativeImageSpaceState, application.Effect, _nativeGameTime);
         root.AddChild(presenter);

@@ -9,7 +9,8 @@ internal sealed record FalloutCellDefinition(
     byte Flags,
     (int X, int Y)? Coordinates,
     FalloutFormKey? Worldspace,
-    FalloutCellLighting? Lighting);
+    FalloutCellLighting? Lighting,
+    float? WaterHeight = null);
 
 internal sealed record FalloutCellLighting(
     byte[] AmbientRgb,
@@ -302,6 +303,10 @@ internal static class FalloutCellSceneReader
         var coordinates = OptionalSingle(values, "XCLC", record);
         if (coordinates is not null && coordinates.Length < sizeof(int) * 2)
             throw Error(record, "XCLC is shorter than two coordinates");
+        var water = OptionalSingle(values, "XCLW", record);
+        if (water is not null && water.Length < sizeof(float))
+            throw Error(record, "XCLW is shorter than one float");
+        var waterHeight = water is null ? (float?)null : ReadFiniteSingle(water, 0, record, "water height");
         return new FalloutCellDefinition(
             cellKey,
             Text(OptionalSingle(values, "EDID", record)),
@@ -310,7 +315,8 @@ internal static class FalloutCellSceneReader
                 BinaryPrimitives.ReadInt32LittleEndian(coordinates),
                 BinaryPrimitives.ReadInt32LittleEndian(coordinates.AsSpan(sizeof(int)))),
             ParentWorldspace(record),
-            null);
+            null,
+            waterHeight);
     }
 
     internal static bool IsInitiallyDisabled(FalloutPlacedReference reference) =>

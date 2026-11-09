@@ -224,6 +224,8 @@ internal sealed partial class NativeGamebryoMovie : CanvasLayer
         Finish(interrupted: true);
     }
 
+    internal void Skip() => Finish(interrupted: true);
+
     private void Finish(bool interrupted)
     {
         if (_finished)
