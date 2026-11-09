@@ -34,14 +34,16 @@ internal partial class RuntimeNativeShaderSky : Node3D
         new Color(0.92f, 0.94f, 0.98f), new Color(0.45f, 0.50f, 0.60f),
         0.52f, 1.0f, 0.35f, 0.25f, 0.6f, 4.5f);
 
-    internal void Configure(Func<Vector3> anchor, float units, Func<string> weather, Func<Vector3> sun)
+    internal void Configure(Func<Vector3> anchor, float units, Func<string> weather, Func<Vector3> sun,
+        int cloudOctaves = 5, float starDensity = 1.5f)
     {
         _anchor = anchor;
         _weather = weather;
         _sun = sun;
         _material = new ShaderMaterial { Shader = GD.Load<Shader>("res://shaders/sky_dome.gdshader") };
         _material.SetShaderParameter("star_intensity", 1.0f);
-        _material.SetShaderParameter("star_density", 1.5f);
+        _material.SetShaderParameter("star_density", starDensity);
+        _material.SetShaderParameter("cloud_octaves", Math.Clamp(cloudOctaves, 1, 5));
         _material.SetShaderParameter("wind_direction", new Vector2(0.85f, 0.28f));
         var starPng = "/home/bazzite/opennv/runtime/assets/env/night_sky.png";
         if (System.IO.File.Exists(starPng))

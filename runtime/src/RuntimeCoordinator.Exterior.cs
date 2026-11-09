@@ -439,9 +439,20 @@ public partial class RuntimeCoordinator
 
     private ShaderMaterial? _nativeWaterMaterial;
 
+    // Tier ladder for weaker fleet GPUs. Defaults to the current full-quality pass.
+    private string EnvironmentTier() => _options.GetValueOrDefault("env-tier", "high").ToLowerInvariant() switch
+    {
+        "low" => "low",
+        "medium" or "med" => "medium",
+        _ => "high",
+    };
+
     private ShaderMaterial NativeWaterMaterial()
     {
         if (_nativeWaterMaterial is not null) return _nativeWaterMaterial;
+        var tier = EnvironmentTier();
+        var low = tier == "low";
+        var medium = tier == "medium";
         var material = new ShaderMaterial { Shader = GD.Load<Shader>("res://shaders/water.gdshader") };
         material.SetShaderParameter("shallow_color", new Color(0.14f, 0.42f, 0.46f));
         material.SetShaderParameter("deep_color", new Color(0.07f, 0.25f, 0.30f));
@@ -450,6 +461,7 @@ public partial class RuntimeCoordinator
         material.SetShaderParameter("water_noise_2", WaterNoise(29, 0.021f));
         material.SetShaderParameter("depth_scale", 4.0f);
         material.SetShaderParameter("refraction_strength", 0.55f);
+        material.SetShaderParameter("refraction_quality", low ? 0.5f : medium ? 0.8f : 1.0f);
         material.SetShaderParameter("normal_scale", 0.35f);
         material.SetShaderParameter("roughness_scale", 0.08f);
         material.SetShaderParameter("time_scale", 2.0f);
@@ -460,18 +472,18 @@ public partial class RuntimeCoordinator
         var solarAngle = (hour - 6.0f) * MathF.PI / 12.0f;
         material.SetShaderParameter("sun_direction", new Vector3(MathF.Cos(solarAngle), MathF.Sin(solarAngle), 0).Normalized());
         material.SetShaderParameter("water_waves", WaterWaves(7, 0.02f));
-        material.SetShaderParameter("wave_height", 0.12f);
+        material.SetShaderParameter("wave_height", low ? 0.06f : 0.12f);
         material.SetShaderParameter("wave_scale", 0.02f);
         material.SetShaderParameter("sun_color", new Color(1.0f, 0.96f, 0.88f));
         material.SetShaderParameter("specular_strength", 0.35f);
         material.SetShaderParameter("specular_power", 180.0f);
         material.SetShaderParameter("foam_strength", 0.35f);
-        material.SetShaderParameter("caustics_quality", 0.70f);
-        material.SetShaderParameter("caustics_strength", 0.38f);
+        material.SetShaderParameter("caustics_quality", low ? 0.0f : medium ? 0.45f : 0.70f);
+        material.SetShaderParameter("caustics_strength", medium ? 0.30f : 0.38f);
         material.SetShaderParameter("caustics_scale", 0.65f);
-        material.SetShaderParameter("ssr_quality", 0.5f);
+        material.SetShaderParameter("ssr_quality", low ? 0.0f : medium ? 0.35f : 0.5f);
         material.SetShaderParameter("ssr_strength", 0.45f);
-        material.SetShaderParameter("ssr_distance", 32.0f);
+        material.SetShaderParameter("ssr_distance", low ? 20.0f : 32.0f);
         _nativeWaterMaterial = material;
         return material;
     }
@@ -530,6 +542,7 @@ public partial class RuntimeCoordinator
             },
             units,
             now => NativeWaterMaterial().RenderPriority = now ? 1 : 0);
+        var waterSubdivisions = EnvironmentTier() switch { "low" => 8, "medium" => 16, _ => 32 };
         foreach (var cell in grid.Cells)
         {
             if (cell.WaterHeight is not { } height || !float.IsFinite(height) || height > 1e30f) continue;
@@ -541,8 +554,8 @@ public partial class RuntimeCoordinator
                 Mesh = new PlaneMesh
                 {
                     Size = new Vector2(4096f, 4096f),
-                    SubdivideWidth = 32,
-                    SubdivideDepth = 32,
+                    SubdivideWidth = waterSubdivisions,
+                    SubdivideDepth = waterSubdivisions,
                 },
                 Position = new Vector3(
                     (gridPosition.X + 0.5f) * 4096f * units,
@@ -627,6 +640,7 @@ public partial class RuntimeCoordinator
         if (_options.ContainsKey("sky-dome"))
         {
             var dome = new RuntimeNativeShaderSky { Name = "ShaderSkyDome" };
+            var tier = EnvironmentTier();
             dome.Configure(() => _nativePlayer?.Camera?.GlobalPosition ?? Vector3.Zero, _configuration.World.GameUnitsToMeters,
                 () => _nativeSkyLighting?.ActiveWeather.EditorId ?? "",
                 () =>
@@ -634,7 +648,10 @@ public partial class RuntimeCoordinator
                     var hour = _nativeGameTime?.Hour ?? 12.0f;
                     var angle = (hour - 6.0f) * MathF.PI / 12.0f;
                     return new Vector3(MathF.Cos(angle), MathF.Sin(angle), 0);
-                });
+                },
+                tier == "low" ? 3 : tier == "medium" ? 4 : 5,
+                tier == "low" ? 1.0f : tier == "medium" ? 1.25f : 1.5f);
+            GD.Print($"OPENNV_ENV_TIER tier={tier}");
             root.AddChild(dome);
         }
         if (_options.ContainsKey("weather-particles"))
