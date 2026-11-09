@@ -56,12 +56,15 @@ float noise(vec2 p) {
 
 const mat2 OCT = mat2(vec2(0.80, -0.60), vec2(0.60, 0.80));
 
-float fbm(vec2 p) {
+float fbm(vec2 p, float detail) {
     float total = 0.0;
     float amp = 0.5;
     for (int i = 0; i < 5; i++) {
         if (i >= cloud_octaves) break;
-        total += amp * noise(p);
+        // Near the horizon the projection's screen-space frequency explodes;
+        // band-limit the high octaves instead of aliasing them into stripes.
+        float octave_detail = mix(1.0, detail, float(i) / 4.0);
+        total += amp * noise(p) * octave_detail;
         p = OCT * p * 2.03;
         amp *= 0.5;
     }
@@ -82,13 +85,13 @@ float star_points(vec3 dir) {
     return smoothstep(size, 0.0, d) * mag * twinkle;
 }
 
-float cloud_density(vec2 uv, float coverage, float sharpness, float softness, float warp_amount) {
-    vec2 warp = vec2(fbm(uv * 0.6 + vec2(1.7, 9.2)), fbm(uv * 0.6 + vec2(8.3, 2.8)));
+float cloud_density(vec2 uv, float coverage, float sharpness, float softness, float warp_amount, float detail) {
+    vec2 warp = vec2(fbm(uv * 0.6 + vec2(1.7, 9.2), detail), fbm(uv * 0.6 + vec2(8.3, 2.8), detail));
     vec2 wuv = uv + (warp - 0.5) * warp_amount;
-    float n1 = fbm(wuv);
-    float n2 = fbm(OCT * wuv * 1.87 + vec2(2.1, 3.4));
+    float n1 = fbm(wuv, detail);
+    float n2 = fbm(OCT * wuv * 1.87 + vec2(2.1, 3.4), detail);
     float density = n1 * 0.65 + n2 * 0.35;
-    float cluster = smoothstep(0.25, 0.75, fbm(uv * 0.25 + vec2(11.0, 5.0)));
+    float cluster = smoothstep(0.25, 0.75, fbm(uv * 0.25 + vec2(11.0, 5.0), detail));
     density *= mix(0.85, 1.0, cluster);
     float edge = sharpness + softness * (1.0 - density);
     return smoothstep(1.0 - coverage, 1.0 - coverage + edge, density);
@@ -136,10 +139,11 @@ void fragment() {
         vec2 base_uv = dir.xz * proj;
 
         vec2 uv1 = base_uv * cloud_scale + wind * TIME * cloud_speed * 0.6;
-        float cumulus = cloud_density(uv1, cloud_coverage, cloud_sharpness, cloud_softness, 1.0);
+        float cloud_detail = smoothstep(0.02, 0.35, ed);
+        float cumulus = cloud_density(uv1, cloud_coverage, cloud_sharpness, cloud_softness, 1.0, cloud_detail);
 
         vec2 uv2 = OCT * (base_uv * cirrus_scale) + wind * TIME * cloud_speed * cirrus_speed_mult * 0.6;
-        float cirrus = cloud_density(uv2, cirrus_coverage, 0.10, 0.60, 0.6) * cirrus_opacity;
+        float cirrus = cloud_density(uv2, cirrus_coverage, 0.10, 0.60, 0.6, cloud_detail) * cirrus_opacity;
 
         vec3 cirrus_col = mix(cloud_shadow_color, cloud_color.rgb, 0.65) * cloud_brightness;
         col = mix(col, cirrus_col, cirrus * horizon_fade * 0.85);
