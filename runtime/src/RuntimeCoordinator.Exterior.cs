@@ -130,12 +130,13 @@ public partial class RuntimeCoordinator
                 var (grid, lands) = await FalloutContentWorkers.Run(() =>
                 {
                     var resolved = ResolveExterior(world, [(target.Item1 + .5f) * 4096, (target.Item2 + .5f) * 4096, position.Y / units]);
-                    var landscapes = resolved.Cells.Where(cell => !resident.Contains(cell.Coordinates!.Value)).ToDictionary(cell => cell.FormKey,
-                        cell =>
-                        {
-                            cancellation.ThrowIfCancellationRequested();
-                            return FalloutLandscapeTransportResolver.ResolveCell(_nativePluginStack!, cell, resolved.PersistentCell);
-                        });
+                    var landscapes = new Dictionary<FalloutFormKey, FalloutLandscapeTransport>();
+                    foreach (var cell in resolved.Cells.Where(cell => !resident.Contains(cell.Coordinates!.Value)))
+                    {
+                        cancellation.ThrowIfCancellationRequested();
+                        var landscape = FalloutLandscapeTransportResolver.ResolveCell(_nativePluginStack!, cell, resolved.PersistentCell);
+                        if (landscape is not null) landscapes.Add(cell.FormKey, landscape);
+                    }
                     foreach (var path in landscapes.Values.SelectMany(land => land.Textures.Values)
                         .SelectMany(texture => new[] { texture.DiffusePath, texture.NormalPath }).OfType<string>().Distinct(StringComparer.OrdinalIgnoreCase))
                     {
@@ -237,7 +238,7 @@ public partial class RuntimeCoordinator
         var root = _nativeCurrentCellRoot!;
         _nativeGridPending = grid; _nativeGridUploads = new();
         var oldLand = root.GetChildren().OfType<RuntimeNativeLandscapeTransport>().Select(land => land.Source.ActiveCell).ToHashSet();
-        foreach (var cell in grid.Cells.Where(cell => !oldLand.Contains(cell.FormKey)))
+        foreach (var cell in grid.Cells.Where(cell => !oldLand.Contains(cell.FormKey) && prepared.Landscapes.ContainsKey(cell.FormKey)))
             _nativeGridUploads.Enqueue((cell.FormKey.ToString(), () =>
             {
                 var land = RuntimeNativeLandscapeTransportBuilder.Build(prepared.Landscapes[cell.FormKey],
@@ -426,10 +427,177 @@ public partial class RuntimeCoordinator
     private void AddExteriorLandscape(Node3D root, FalloutExteriorGridScene grid)
     {
         foreach (var cell in grid.Cells)
+        {
+            var source = FalloutLandscapeTransportResolver.ResolveCell(_nativePluginStack!, cell, grid.PersistentCell);
+            if (source is null) continue;
             root.AddChild(RuntimeNativeLandscapeTransportBuilder.Build(
-                FalloutLandscapeTransportResolver.ResolveCell(_nativePluginStack!, cell, grid.PersistentCell),
-                _configuration.World.GameUnitsToMeters, _nativeLandscapeTextures));
+                source, _configuration.World.GameUnitsToMeters, _nativeLandscapeTextures));
+        }
+        AddExteriorWater(root, grid);
         CompleteExteriorLandscape(root, grid);
+    }
+
+    private ShaderMaterial? _nativeWaterMaterial;
+
+    private ShaderMaterial NativeWaterMaterial()
+    {
+        if (_nativeWaterMaterial is not null) return _nativeWaterMaterial;
+        var material = new ShaderMaterial { Shader = GD.Load<Shader>("res://shaders/water.gdshader") };
+        material.SetShaderParameter("shallow_color", new Color(0.14f, 0.42f, 0.46f));
+        material.SetShaderParameter("deep_color", new Color(0.07f, 0.25f, 0.30f));
+        material.SetShaderParameter("sky_color", new Color(0.55f, 0.68f, 0.80f));
+        material.SetShaderParameter("water_noise_1", WaterNoise(11, 0.012f));
+        material.SetShaderParameter("water_noise_2", WaterNoise(29, 0.021f));
+        material.SetShaderParameter("depth_scale", 4.0f);
+        material.SetShaderParameter("refraction_strength", 0.55f);
+        material.SetShaderParameter("normal_scale", 0.35f);
+        material.SetShaderParameter("roughness_scale", 0.08f);
+        material.SetShaderParameter("time_scale", 2.0f);
+        material.SetShaderParameter("uv_scale", 1.2f);
+        material.SetShaderParameter("fresnel_power", 5.0f);
+        material.SetShaderParameter("reflection_strength", 0.60f);
+        var hour = _nativeGameTime?.Hour ?? 12.0f;
+        var solarAngle = (hour - 6.0f) * MathF.PI / 12.0f;
+        material.SetShaderParameter("sun_direction", new Vector3(MathF.Cos(solarAngle), MathF.Sin(solarAngle), 0).Normalized());
+        material.SetShaderParameter("water_waves", WaterWaves(7, 0.02f));
+        material.SetShaderParameter("wave_height", 0.12f);
+        material.SetShaderParameter("wave_scale", 0.02f);
+        material.SetShaderParameter("sun_color", new Color(1.0f, 0.96f, 0.88f));
+        material.SetShaderParameter("specular_strength", 0.35f);
+        material.SetShaderParameter("specular_power", 180.0f);
+        material.SetShaderParameter("foam_strength", 0.35f);
+        material.SetShaderParameter("caustics_quality", 0.70f);
+        material.SetShaderParameter("caustics_strength", 0.50f);
+        material.SetShaderParameter("caustics_scale", 0.5f);
+        material.SetShaderParameter("ssr_quality", 0.5f);
+        material.SetShaderParameter("ssr_strength", 0.45f);
+        material.SetShaderParameter("ssr_distance", 32.0f);
+        _nativeWaterMaterial = material;
+        return material;
+    }
+
+    private static NoiseTexture2D WaterNoise(int seed, float frequency) => new()
+    {
+        Width = 512,
+        Height = 512,
+        Seamless = true,
+        AsNormalMap = true,
+        GenerateMipmaps = true,
+        Noise = new FastNoiseLite
+        {
+            NoiseType = FastNoiseLite.NoiseTypeEnum.Simplex,
+            Frequency = frequency,
+            Seed = seed,
+            FractalOctaves = 3,
+        },
+    };
+
+    private static NoiseTexture3D WaterWaves(int seed, float frequency) => new()
+    {
+        Width = 64,
+        Height = 64,
+        Depth = 64,
+        Seamless = true,
+        Noise = new FastNoiseLite
+        {
+            NoiseType = FastNoiseLite.NoiseTypeEnum.Simplex,
+            Frequency = frequency,
+            Seed = seed,
+            FractalOctaves = 3,
+        },
+    };
+
+    private void AddExteriorWater(Node3D root, FalloutExteriorGridScene grid)
+    {
+        var units = _configuration.World.GameUnitsToMeters;
+        var waterPlanes = 0;
+        if (root.GetNodeOrNull<RuntimeNativeUnderwater>("UnderwaterTint") is not { } underwater)
+        {
+            underwater = new RuntimeNativeUnderwater { Name = "UnderwaterTint" };
+            root.AddChild(underwater);
+        }
+        var heights = new Dictionary<(int, int), float>();
+        foreach (var cell in grid.Cells)
+            if (cell.WaterHeight is float level && float.IsFinite(level) && level < 1e30f && cell.Coordinates is { } coordinates)
+                heights[coordinates] = level;
+        underwater.Configure(
+            () => _nativePlayer?.Camera?.GlobalPosition ?? Vector3.Zero,
+            world =>
+            {
+                var gx = (int)MathF.Floor((world.X / units) / 4096f);
+                var gy = (int)MathF.Floor((-world.Z / units) / 4096f);
+                return heights.TryGetValue((gx, gy), out var level) ? level : null;
+            },
+            units,
+            now => NativeWaterMaterial().RenderPriority = now ? 1 : 0);
+        foreach (var cell in grid.Cells)
+        {
+            if (cell.WaterHeight is not { } height || !float.IsFinite(height) || height > 1e30f) continue;
+            var coordinates = cell.Coordinates;
+            if (coordinates is not { } gridPosition) continue;
+            var plane = new MeshInstance3D
+            {
+                Name = $"NativeWater_{cell.FormKey}",
+                Mesh = new PlaneMesh
+                {
+                    Size = new Vector2(4096f, 4096f),
+                    SubdivideWidth = 32,
+                    SubdivideDepth = 32,
+                },
+                Position = new Vector3(
+                    (gridPosition.X + 0.5f) * 4096f * units,
+                    height * units,
+                    -(gridPosition.Y + 0.5f) * 4096f * units),
+                CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+            };
+            plane.MaterialOverride = NativeWaterMaterial();
+            root.AddChild(plane);
+            waterPlanes++;
+            GD.Print($"OPENNV_NATIVE_WATER cell={cell.FormKey} grid={gridPosition} height={height} y={plane.Position.Y:F2}");
+        }
+        var worldspace = grid.Scene.Cell.Worldspace ?? throw new InvalidDataException("Exterior water has no worldspace.");
+        var center = grid.Scene.Cell.Coordinates ?? throw new InvalidDataException("Exterior water has no grid coordinates.");
+        var loadDistance = FalloutInstallationSettings.Read(RuntimeLiveContentSource.Current!).Number("TerrainManager", "fBlockLoadDistance");
+        var distantRadius = Math.Clamp((int)MathF.Ceiling(loadDistance / 4096f), grid.Radius + 1, 64);
+        var distantCells = _nativeExteriorGrid is null ? Array.Empty<(int X, int Y, float Height)>()
+            : _nativeExteriorGrid.WaterCells(worldspace, center.X, center.Y, distantRadius)
+                .Where(cell => Math.Abs(cell.X - center.X) > grid.Radius || Math.Abs(cell.Y - center.Y) > grid.Radius).ToArray();
+        if (distantCells.Length != 0)
+        {
+            var vertices = new Vector3[distantCells.Length * 6];
+            var normals = new Vector3[vertices.Length];
+            Array.Fill(normals, Vector3.Up);
+            for (var index = 0; index < distantCells.Length; index++)
+            {
+                var (x, y, level) = distantCells[index];
+                var minX = x * 4096f * units; var maxX = (x + 1) * 4096f * units;
+                var minZ = -(y + 1) * 4096f * units; var maxZ = -y * 4096f * units;
+                var surface = level * units;
+                var offset = index * 6;
+                vertices[offset + 0] = new Vector3(minX, surface, minZ);
+                vertices[offset + 1] = new Vector3(minX, surface, maxZ);
+                vertices[offset + 2] = new Vector3(maxX, surface, maxZ);
+                vertices[offset + 3] = new Vector3(minX, surface, minZ);
+                vertices[offset + 4] = new Vector3(maxX, surface, maxZ);
+                vertices[offset + 5] = new Vector3(maxX, surface, minZ);
+            }
+            var arrays = new Godot.Collections.Array();
+            arrays.Resize((int)Mesh.ArrayType.Max);
+            arrays[(int)Mesh.ArrayType.Vertex] = vertices;
+            arrays[(int)Mesh.ArrayType.Normal] = normals;
+            var mesh = new ArrayMesh();
+            mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arrays);
+            var distant = new MeshInstance3D
+            {
+                Name = "NativeWaterDistant",
+                Mesh = mesh,
+                CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+            };
+            distant.MaterialOverride = NativeWaterMaterial();
+            root.AddChild(distant);
+            GD.Print($"OPENNV_NATIVE_WATER_DISTANT cells={distantCells.Length} radiusCells={distantRadius} levels={string.Join(",", distantCells.Select(cell => cell.Height).Distinct().Order())}");
+        }
+        GD.Print($"OPENNV_NATIVE_WATER_TOTAL cells={grid.Cells.Count} planes={waterPlanes}");
     }
 
     private void CompleteExteriorLandscape(Node3D root, FalloutExteriorGridScene grid)
@@ -447,15 +615,36 @@ public partial class RuntimeCoordinator
         var imageSpace = FalloutImageSpaceReader.ForCell(_nativePluginStack!, cell.FormKey) ??
             FalloutImageSpaceReader.ForWorld(_nativePluginStack!, cell.Worldspace ??
                 throw new InvalidDataException("Exterior environment has no worldspace."));
-        sky.Compositor = AddNativeImageSpace(root, imageSpace);
+        sky.Compositor = (_options.ContainsKey("sky-shader") || _options.ContainsKey("sky-simple")) ? null : AddNativeImageSpace(root, imageSpace);
         sky.ImageSpace = imageSpace;
         var diameter = Math.Max(checked((int)FalloutInstallationSettings.Read(RuntimeLiveContentSource.Current!).Unsigned("General", "uGridsToLoad")),
             _configuration.World.MinimumExteriorGridDiameter);
         // Cover the complete resident square, including its diagonal when the
         // player crosses an anchor boundary. Engine defaults cut this at 100m.
         var shadowDistance = (diameter / 2 + 1) * 4096 * _configuration.World.GameUnitsToMeters * MathF.Sqrt(2);
-        sky.Configure(_nativePluginStack!, _nativeSkyLighting!, () => _nativeGameTime!.Hour, _configuration.World.GameUnitsToMeters, this, shadowDistance);
+        sky.Configure(_nativePluginStack!, _nativeSkyLighting!, () => _nativeGameTime!.Hour, _configuration.World.GameUnitsToMeters, this, shadowDistance, _options.ContainsKey("sky-shader") || _options.ContainsKey("sky-simple"), _options.ContainsKey("sky-simple") ? "res://shaders/sky_simple.gdshader" : "res://shaders/sky_sorta.gdshader", _options.ContainsKey("sky-dome"));
         root.AddChild(sky);
+        if (_options.ContainsKey("sky-dome"))
+        {
+            var dome = new RuntimeNativeShaderSky { Name = "ShaderSkyDome" };
+            dome.Configure(() => _nativePlayer?.Camera?.GlobalPosition ?? Vector3.Zero, _configuration.World.GameUnitsToMeters,
+                () => _nativeSkyLighting?.ActiveWeather.EditorId ?? "",
+                () =>
+                {
+                    var hour = _nativeGameTime?.Hour ?? 12.0f;
+                    var angle = (hour - 6.0f) * MathF.PI / 12.0f;
+                    return new Vector3(MathF.Cos(angle), MathF.Sin(angle), 0);
+                });
+            root.AddChild(dome);
+        }
+        if (_options.ContainsKey("weather-particles"))
+        {
+            var precipitation = new RuntimeNativePrecipitation { Name = "WeatherParticles" };
+            precipitation.Configure(() => _nativeSkyLighting!.ActiveWeather.EditorId,
+                () => _nativePlayer?.Camera?.GlobalPosition ?? Vector3.Zero);
+            root.AddChild(precipitation);
+            GD.Print($"OPENNV_NATIVE_WEATHER_PARTICLES weather={_nativeSkyLighting!.ActiveWeather.EditorId}");
+        }
         var wind = new RuntimeNativeWind { Name = "ExteriorWindOwner" };
         FalloutFormKey? windWeather = null;
         float windSpeed = 0;

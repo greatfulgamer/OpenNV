@@ -62,18 +62,25 @@ internal readonly record struct FalloutWeatherTimeWeights(int First, int Second,
 internal sealed record FalloutWeatherLighting(FalloutFormKey Form, byte[] SunlightRgba, string SourceSha256)
 {
     internal byte[] Colors { get; init; } = [];
+    internal string EditorId { get; init; } = "";
     internal int TimeSamples => SunlightRgba.Length / 4;
     internal static FalloutWeatherLighting Read(FalloutPluginRecord record)
     {
         if (record.Signature != "WTHR") throw new InvalidDataException("Sky weather does not resolve to WTHR.");
-        var data = record.ReadSubrecords().Single(field => field.Signature == "NAM0").Data;
+        var fields = record.ReadSubrecords().ToArray();
+        var data = fields.Single(field => field.Signature == "NAM0").Data;
         // FO3 has four authored time samples per class; FNV adds noon/midnight.
         // Preserve the original stride and bytes rather than expanding a palette.
         if (data.Length is not (160 or 240)) throw new NotSupportedException("Weather NAM0 colour layout is unbound.");
         var stride = data.Length / 10;
         return new(record.FormKey, data.Slice(4 * stride, stride).ToArray(),
             Convert.ToHexString(SHA256.HashData(data.Span)).ToLowerInvariant())
-        { Colors = data.ToArray() };
+        {
+            Colors = data.ToArray(),
+            EditorId = fields.Where(field => field.Signature == "EDID")
+                .Select(field => System.Text.Encoding.ASCII.GetString(field.Data.Span).TrimEnd((char)0))
+                .FirstOrDefault() ?? ""
+        };
     }
 
     internal float[] Sample(FalloutWeatherTimeWeights weights)

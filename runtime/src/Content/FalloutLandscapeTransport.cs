@@ -1,3 +1,4 @@
+using Godot;
 using System.Buffers.Binary;
 using System.Text;
 
@@ -103,14 +104,28 @@ internal static class FalloutLandscapeTransportResolver
             transition.DestinationWorldspace, defaultTexture);
     }
 
-    internal static FalloutLandscapeTransport ResolveCell(FalloutPluginStack stack, FalloutCellDefinition cell, FalloutFormKey persistentCell,
+    internal static FalloutLandscapeTransport? ResolveCell(FalloutPluginStack stack, FalloutCellDefinition cell, FalloutFormKey persistentCell,
         FalloutLandscapeTexture? defaultTexture = null)
     {
+        var coordinates = cell.Coordinates is { } value ? $"{value.X},{value.Y}" : "none";
         var records = stack.EffectiveCellChildren(cell.FormKey, new HashSet<string> { "LAND" }).ToArray();
+        if (records.Length == 0)
+        {
+            GD.Print($"OPENNV_LAND_SKIP cell={cell.FormKey} coords={coordinates} reason=no-land");
+            return null;
+        }
         if (records.Length != 1) throw new InvalidDataException($"Exterior CELL {cell.FormKey} has {records.Length} LAND records.");
-        return ReadLandscape(stack, records[0], persistentCell, cell.FormKey,
-            cell.Coordinates ?? throw new InvalidDataException("Landscape CELL has no grid coordinates."),
-            cell.Worldspace ?? throw new InvalidDataException("Landscape CELL has no worldspace."), defaultTexture);
+        try
+        {
+            return ReadLandscape(stack, records[0], persistentCell, cell.FormKey,
+                cell.Coordinates ?? throw new InvalidDataException("Landscape CELL has no grid coordinates."),
+                cell.Worldspace ?? throw new InvalidDataException("Landscape CELL has no worldspace."), defaultTexture);
+        }
+        catch (Exception error) when (error is InvalidDataException or NotSupportedException && error.Message.Contains("no authored vertex geometry", StringComparison.Ordinal))
+        {
+            GD.Print($"OPENNV_LAND_SKIP cell={cell.FormKey} coords={coordinates} reason=no-vertices");
+            return null;
+        }
     }
 
     private static FalloutLandscapeTransport ReadLandscape(

@@ -13,6 +13,13 @@ public partial class RuntimeCoordinator
     public override void _Process(double delta)
     {
         if (GetTree().Paused) return;
+        if (_nativeWaterMaterial is not null)
+        {
+            var hour = _nativeGameTime?.Hour ?? 12.0f;
+            var angle = (hour - 6.0f) * MathF.PI / 12.0f;
+            _nativeWaterMaterial.SetShaderParameter("sun_direction",
+                new Vector3(MathF.Cos(angle), MathF.Sin(angle), 0).Normalized());
+        }
         AdvanceNativePipBoyWorld(delta);
         AdvanceNativePlayerMoves();
         AdvanceNativeDeath();

@@ -68,6 +68,23 @@ internal sealed class FalloutExteriorGrid(FalloutPluginStack records)
         return index;
     }
 
+    internal IReadOnlyList<(int X, int Y, float Height)> WaterCells(FalloutFormKey world, int centerX, int centerY, int radius)
+    {
+        var index = WorldCells(world);
+        var result = new List<(int X, int Y, float Height)>();
+        foreach (var ((x, y), key) in index)
+        {
+            if (Math.Abs(x - centerX) > radius || Math.Abs(y - centerY) > radius) continue;
+            if (!records.TryGetWinner(key, out var record)) continue;
+            var water = record.ReadSubrecords().FirstOrDefault(field => field.Signature == "XCLW").Data;
+            if (water.Length < sizeof(float)) continue;
+            var height = BinaryPrimitives.ReadSingleLittleEndian(water.Span);
+            if (!float.IsFinite(height) || height > 1e30f) continue;
+            result.Add((x, y, height));
+        }
+        return result;
+    }
+
     private FalloutExteriorGridScene ResolveCore(FalloutFormKey world, FalloutFormKey persistentCell, float x, float y, int diameter)
     {
         if (diameter < 1 || diameter % 2 == 0) throw new InvalidDataException("Exterior grid diameter must be positive and odd.");

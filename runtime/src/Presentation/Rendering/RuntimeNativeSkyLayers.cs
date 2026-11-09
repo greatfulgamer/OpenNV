@@ -52,7 +52,10 @@ internal partial class RuntimeNativeSkyLayers : Node3D
                 switch (material.GetMeta("opennv_sky_object_type").AsUInt32())
                 {
                     case 2: _atmosphere.Add(material); break;
-                    case 5: _stars.Add(material); break;
+                    case 5:
+                        _stars.Add(material);
+                        GD.Print($"OPENNV_NATIVE_STARS_TEXTURE {material.GetMeta("opennv_sky_texture")}");
+                        break;
                     case 3:
                         if (mesh.Mesh.GetSurfaceCount() != 1) throw new NotSupportedException("Cloud layer has multiple material surfaces.");
                         _clouds.Add((mesh, material, 0));

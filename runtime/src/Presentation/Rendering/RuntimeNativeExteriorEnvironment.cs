@@ -23,6 +23,10 @@ internal partial class RuntimeNativeExteriorEnvironment : Node
     private Vector3 _ambient, _fog, _range;
     private bool _lightingBound;
     private float _shadowDistance = 100;
+    private bool _useSkyShader;
+    private bool _suppressSky;
+    private string? _skyShaderPath;
+    private ShaderMaterial? _skyMaterial;
     internal Compositor? Compositor { get; set; }
     internal FalloutImageSpace? ImageSpace { get; set; }
     internal int RegisteredSurfaces => _meshes.Count;
@@ -38,8 +42,12 @@ internal partial class RuntimeNativeExteriorEnvironment : Node
     };
 
     internal void Configure(FalloutPluginStack records, FalloutSkyLightingState sky, Func<float> hour, float units,
-        Node? sceneRoot = null, float shadowDistance = 100)
+        Node? sceneRoot = null, float shadowDistance = 100, bool useSkyShader = false, string? skyShaderPath = null,
+        bool suppressSky = false)
     {
+        _useSkyShader = useSkyShader;
+        _skyShaderPath = skyShaderPath;
+        _suppressSky = suppressSky;
         if (!float.IsFinite(shadowDistance) || shadowDistance <= 0)
             throw new InvalidDataException("Exterior shadow distance must cover a positive finite region.");
         _records = records; _sky = sky; _hour = hour; _units = units; _sceneRoot = sceneRoot; _shadowDistance = shadowDistance;
@@ -64,11 +72,14 @@ internal partial class RuntimeNativeExteriorEnvironment : Node
         _scene = _sceneRoot ?? GetParent(); _tree = GetTree();
         _tree.NodeAdded += BindAdded; _tree.NodeRemoved += RemoveSurface;
         _layers = new RuntimeNativeSkyLayers { Name = "OwnedSkyLayers" };
-        _layers.Build(_records, _sky, _units);
-        AddChild(_layers);
+        if (!_useSkyShader && !_suppressSky)
+        {
+            _layers.Build(_records, _sky, _units);
+            AddChild(_layers);
+        }
         _environment = new Godot.Environment
         {
-            BackgroundMode = Godot.Environment.BGMode.Color,
+            BackgroundMode = _useSkyShader ? Godot.Environment.BGMode.Sky : Godot.Environment.BGMode.Color,
             BackgroundColor = Colors.Black,
             AmbientLightSource = Godot.Environment.AmbientSource.Color,
             AmbientLightEnergy = 1,
@@ -76,6 +87,71 @@ internal partial class RuntimeNativeExteriorEnvironment : Node
             FogEnabled = true,
             FogMode = Godot.Environment.FogModeEnum.Depth,
         };
+        if (_useSkyShader)
+        {
+            _environment.BackgroundMode = Godot.Environment.BGMode.Sky;
+            _environment.AmbientLightSource = Godot.Environment.AmbientSource.Sky;
+            _environment.AmbientLightSkyContribution = 0.933f;
+            _environment.AmbientLightEnergy = 1.0f;
+            _environment.GlowEnabled = true;
+            _environment.TonemapMode = Godot.Environment.ToneMapper.Aces;
+            _environment.TonemapExposure = 0.20f;
+            _environment.TonemapWhite = 1.0f;
+            _skyMaterial = new ShaderMaterial
+            {
+                Shader = GD.Load<Shader>(_skyShaderPath ?? "res://shaders/sky_sorta.gdshader"),
+            };
+            if (_skyShaderPath is not null && _skyShaderPath.Contains("sky_simple"))
+            {
+                _skyMaterial.SetShaderParameter("top_color", new Color(0.12f, 0.34f, 0.68f));
+                _skyMaterial.SetShaderParameter("bottom_color", new Color(0.55f, 0.70f, 0.84f));
+                _skyMaterial.SetShaderParameter("cloud_color", new Color(1.0f, 1.0f, 1.0f, 1.0f));
+                _skyMaterial.SetShaderParameter("cloud_speed", 0.6f);
+                _skyMaterial.SetShaderParameter("cloud_coverage", 0.55f);
+                _skyMaterial.SetShaderParameter("cloud_scale", 2.5f);
+                _skyMaterial.SetShaderParameter("cloud_brightness", 1.4f);
+                _skyMaterial.SetShaderParameter("cloud_sharpness", 0.25f);
+                _skyMaterial.SetShaderParameter("horizon_glow", 0.4f);
+                _skyMaterial.SetShaderParameter("enable_stars", false);
+            }
+            else
+            {
+                _skyMaterial.SetShaderParameter("use_debanding", true);
+                _skyMaterial.SetShaderParameter("atmosphere_sample_count", 32);
+                _skyMaterial.SetShaderParameter("elevation", 0.0f);
+                _skyMaterial.SetShaderParameter("rayleigh_strength", 1.0f);
+                _skyMaterial.SetShaderParameter("mie_strength", 1.0f);
+                _skyMaterial.SetShaderParameter("exposure", 13.0f);
+                _skyMaterial.SetShaderParameter("sundisc_intensity", 30.0f);
+                _skyMaterial.SetShaderParameter("use_cirrus", false);
+                _skyMaterial.SetShaderParameter("use_rainbow", false);
+                _skyMaterial.SetShaderParameter("hole_in_center", false);
+                _skyMaterial.SetShaderParameter("cloud_base_color", new Color(0.765f, 0.789f, 0.859f));
+                _skyMaterial.SetShaderParameter("cloud_overcast_color", new Color(0.765f, 0.788f, 0.859f));
+                _skyMaterial.SetShaderParameter("coverage", 0.35f);
+                _skyMaterial.SetShaderParameter("cloud_smoothness", 0.05f);
+                _skyMaterial.SetShaderParameter("cloud_base_march_dist", 10.0f);
+                _skyMaterial.SetShaderParameter("cloud_marches", 32);
+                _skyMaterial.SetShaderParameter("density_coeff", 1.5f);
+                _skyMaterial.SetShaderParameter("cloud_noise_factor", 0.2f);
+                _skyMaterial.SetShaderParameter("cloud_shape_size", 3.0f);
+                _skyMaterial.SetShaderParameter("cloud_noise_size", 12.0f);
+                _skyMaterial.SetShaderParameter("clouds_anisotropy_factor", 0.15f);
+                _skyMaterial.SetShaderParameter("light_marches", 4);
+                _skyMaterial.SetShaderParameter("light_max_dist", 5.0f);
+                _skyMaterial.SetShaderParameter("light_strength", 25.0f);
+                _skyMaterial.SetShaderParameter("clouds_alpha_lower_bound", 0.0f);
+                _skyMaterial.SetShaderParameter("clouds_alpha_upper_bound", 0.15f);
+                _skyMaterial.SetShaderParameter("cloud_shape", SkyNoise(2, 0.0231f, true, true));
+                _skyMaterial.SetShaderParameter("cloud_noise", SkyNoise(2, 0.0285f, false, false));
+            }
+            _environment.Sky = new Sky
+            {
+                SkyMaterial = _skyMaterial,
+                RadianceSize = Sky.RadianceSizeEnum.Size256,
+                ProcessMode = Sky.ProcessModeEnum.Realtime,
+            };
+        }
         AddChild(new WorldEnvironment { Name = "OwnedExteriorEnvironment", Environment = _environment, Compositor = Compositor });
         _sun = new DirectionalLight3D
         {
@@ -102,6 +178,22 @@ internal partial class RuntimeNativeExteriorEnvironment : Node
         if (Math.Abs(_hour() - _lastHour) > 1f / 3600) Sample();
     }
 
+    private static NoiseTexture3D SkyNoise(int seed, float frequency, bool invert, bool cellular) => new()
+    {
+        Width = 128,
+        Height = 128,
+        Depth = 128,
+        Seamless = true,
+        Invert = invert,
+        Noise = new FastNoiseLite
+        {
+            NoiseType = cellular ? FastNoiseLite.NoiseTypeEnum.Cellular : FastNoiseLite.NoiseTypeEnum.Simplex,
+            Frequency = frequency,
+            Seed = seed,
+            FractalOctaves = 1,
+        },
+    };
+
     private void Sample()
     {
         var hour = _lastHour = _hour();
@@ -109,12 +201,14 @@ internal partial class RuntimeNativeExteriorEnvironment : Node
         var weights = FalloutWeatherTimeWeights.Sample(_sky.Climate, hour, _sky.DaytimeExtension, weather.TimeSamples);
         Color ColorAt(int kind) { var rgb = weather.Sample(weights, kind); return new(rgb[0], rgb[1], rgb[2]); }
         var ambient = ColorAt(3); var fog = ColorAt(1);
-        _layers.Sample(_records, weather, weights, ImageSpace?.RawTraits[8] ?? 1f);
+        if (!_useSkyShader && !_suppressSky) _layers.Sample(_records, weather, weights, ImageSpace?.RawTraits[8] ?? 1f);
         var solarAngle = (hour - 6) * MathF.PI / 12;
         var direction = new Vector3(MathF.Cos(solarAngle), MathF.Sin(solarAngle), 0).Normalized();
         _sun.Basis = RetailLighting.DirectionalLightBasis(direction);
         _sun.LightColor = RetailLighting.GodotLightColor(ColorAt(4));
-        _sun.LightEnergy = direction.Y > 0 ? ImageSpace?.RawTraits[11] ?? 1 : 0;
+        _sun.LightEnergy = _useSkyShader
+            ? Mathf.Clamp((direction.Y + 0.09f) / 0.09f, 0.0f, 1.0f)
+            : direction.Y > 0 ? ImageSpace?.RawTraits[11] ?? 1 : 0;
         _environment.AmbientLightColor = ambient;
         _environment.FogLightColor = fog;
         var declaration = _records.GetEffective(weather.Form).ReadSubrecords().Single(field => field.Signature == "FNAM").Data;
