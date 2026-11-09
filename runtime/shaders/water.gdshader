@@ -56,11 +56,39 @@ vec3 sample_refraction(vec2 uv, float blur_px) {
 	return c;
 }
 
+vec2 caustic_hash(vec2 p) {
+	p = vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)));
+	return fract(sin(p) * 43758.5453);
+}
+
+// Cellular (voronoi F2-F1) caustic network. Two animated layers at different
+// scales replace the old concentric sine rings, which read as synthetic.
 float caustic_veins(vec2 p, float t) {
 	vec2 q = p * caustics_scale;
-	float a = sin(q.x * 3.7 + t) * cos(q.y * 4.3 - t * 0.7);
-	float b = sin((q.x + q.y) * 2.9 - t * 1.3) * cos((q.x - q.y) * 3.1 + t * 0.9);
-	return pow(1.0 - clamp(abs(a + b) * 0.5, 0.0, 1.0), 8.0);
+	float result = 0.0;
+	for (int layer = 0; layer < 2; ++layer) {
+		float scale = layer == 0 ? 1.0 : 1.7;
+		float speed = layer == 0 ? 0.35 : -0.22;
+		vec2 s = q * scale + vec2(t * speed, t * speed * 0.6);
+		vec2 n = floor(s);
+		vec2 f = fract(s);
+		float d1 = 8.0;
+		float d2 = 8.0;
+		for (int j = -1; j <= 1; ++j) {
+			for (int i = -1; i <= 1; ++i) {
+				vec2 g = vec2(float(i), float(j));
+				vec2 o = caustic_hash(n + g);
+				o = 0.5 + 0.5 * sin(t * speed * 1.7 + 6.2831853 * o);
+				vec2 r = g + o - f;
+				float d = dot(r, r);
+				if (d < d1) { d2 = d1; d1 = d; }
+				else if (d < d2) { d2 = d; }
+			}
+		}
+		float edge = sqrt(d2) - sqrt(d1);
+		result += pow(1.0 - clamp(edge * 2.2, 0.0, 1.0), 3.0);
+	}
+	return clamp(result * 0.5, 0.0, 1.0);
 }
 
 void fragment() {
