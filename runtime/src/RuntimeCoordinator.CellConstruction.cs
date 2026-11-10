@@ -124,7 +124,8 @@ public partial class RuntimeCoordinator
                     throw new OperationCanceledException("Landscape construction session retired.");
                 var started = Stopwatch.GetTimestamp();
                 root.AddChild(RuntimeNativeLandscapeTransportBuilder.Build(source,
-                    _configuration.World.GameUnitsToMeters, _nativeLandscapeTextures));
+                    _configuration.World.GameUnitsToMeters, _nativeLandscapeTextures, GrassDensity(),
+                    GrassSuppression(grid.Scene, source.ActiveCoordinates)));
                 maximumCellMilliseconds = Math.Max(maximumCellMilliseconds, Stopwatch.GetElapsedTime(started).TotalMilliseconds);
                 if (Stopwatch.GetElapsedTime(slice).TotalMilliseconds < 4) continue;
                 await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);

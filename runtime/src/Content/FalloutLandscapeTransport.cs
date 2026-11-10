@@ -44,6 +44,7 @@ internal sealed record FalloutLandscapeTransport(
     FalloutFormKey Worldspace,
     FalloutFormKey Landscape,
     uint Flags,
+    float? WaterHeight,
     float[] Heights,
     float[] Normals,
     byte[] Colors,
@@ -196,6 +197,14 @@ internal static class FalloutLandscapeTransportResolver
         if (alphaLayers.Select(value => (value.Quadrant, value.LayerIndex)).Distinct().Count() !=
             alphaLayers.Count)
             throw Error(record, "duplicates an ATXT quadrant/layer index");
+        float? waterHeight = null;
+        var cell = stack.GetEffective(activeCell);
+        var xclw = cell.ReadSubrecords().Where(row => row.Signature == "XCLW").ToArray();
+        if (xclw.Length == 1 && xclw[0].Data.Length >= sizeof(float))
+        {
+            var value = BinaryPrimitives.ReadSingleLittleEndian(xclw[0].Data.Span);
+            if (float.IsFinite(value) && value < 1.0e30f) waterHeight = value;
+        }
         var textures = baseLayers.Concat(alphaLayers).Select(value => value.Texture)
             .Distinct()
             .ToDictionary(key => key, key => key.ObjectId == 0
@@ -209,6 +218,7 @@ internal static class FalloutLandscapeTransportResolver
             worldspace,
             record.FormKey,
             flags,
+            waterHeight,
             heights,
             normals,
             colors,

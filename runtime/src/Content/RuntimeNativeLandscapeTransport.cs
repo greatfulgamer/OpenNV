@@ -33,7 +33,8 @@ internal static class RuntimeNativeLandscapeTransportBuilder
         FalloutLandscapeTransport source,
         float gameUnitsToMeters,
         IDictionary<string, Texture2D>? decodedTextures = null,
-        float grassDensity = 1.0f)
+        float grassDensity = 1.0f,
+        IReadOnlyList<(Vector2 Center, float Radius)>? grassSuppression = null)
     {
         if (!float.IsFinite(gameUnitsToMeters) || gameUnitsToMeters <= 0.0f)
             throw new ArgumentOutOfRangeException(
@@ -107,7 +108,7 @@ internal static class RuntimeNativeLandscapeTransportBuilder
         collision.AddChild(collisionShape);
         root.AddChild(collision);
         NativeExteriorDetailBlend.Bind(root, terrain: true);
-        if (grassDensity > 0.0f) AddGrass(root, source, gameUnitsToMeters, grassDensity);
+        if (grassDensity > 0.0f) AddGrass(root, source, gameUnitsToMeters, grassDensity, grassSuppression);
         return root;
     }
 
@@ -267,53 +268,106 @@ internal static class RuntimeNativeLandscapeTransportBuilder
     private sealed record GrassPrototype(Mesh? Mesh, Material? Material);
     private static readonly Dictionary<string, GrassPrototype> GrassPrototypes = new(StringComparer.OrdinalIgnoreCase);
 
-    private static void AddGrass(Node3D root, FalloutLandscapeTransport source, float units, float densityScale)
+    private static void AddGrass(Node3D root, FalloutLandscapeTransport source, float units, float densityScale,
+        IReadOnlyList<(Vector2 Center, float Radius)>? suppression)
     {
         var content = RuntimeLiveContentSource.Current;
         if (content is null) return;
-        var grassByForm = source.Textures.Values
-            .SelectMany(texture => texture.Grass ?? [])
-            .GroupBy(grass => grass.Form)
-            .ToDictionary(group => group.Key, group => group.First());
-        GD.Print($"OPENNV_NATIVE_GRASS cell={source.ActiveCell} textures={source.Textures.Count} types={grassByForm.Count}");
-        if (grassByForm.Count == 0) return;
+        var hasGrass = source.Textures.Values.Any(texture => (texture.Grass?.Count ?? 0) != 0);
+        GD.Print($"OPENNV_NATIVE_GRASS cell={source.ActiveCell} textures={source.Textures.Count} grass={hasGrass}");
+        if (!hasGrass) return;
         var random = new Random(unchecked((int)source.ActiveCell.ObjectId) ^ 0x5EED);
         var cellX = source.ActiveCoordinates.X * FalloutLandscapeTransportResolver.ExteriorCellSideGameUnits;
         var cellY = source.ActiveCoordinates.Y * FalloutLandscapeTransportResolver.ExteriorCellSideGameUnits;
         for (byte quadrant = 0; quadrant < QuadrantSide * QuadrantSide; ++quadrant)
         {
-            var forms = new HashSet<FalloutFormKey>();
             var basis = source.BaseLayers.Single(layer => layer.Quadrant == quadrant);
-            if (source.Textures[basis.Texture].Grass is { } baseGrass)
-                foreach (var grass in baseGrass) forms.Add(grass.Form);
-            foreach (var layer in source.AlphaLayers.Where(layer => layer.Quadrant == quadrant))
-                if (source.Textures[layer.Texture].Grass is { } alphaGrass)
-                    foreach (var grass in alphaGrass) forms.Add(grass.Form);
-            foreach (var form in forms)
+            var alphaLayers = source.AlphaLayers.Where(layer => layer.Quadrant == quadrant)
+                .OrderBy(layer => layer.LayerIndex).ToArray();
+            var layers = new[] { basis }.Concat(alphaLayers).ToArray();
+            var weights = FalloutLandscapeMaterialInputs.Weights(alphaLayers);
+            var choices = new List<(FalloutGrass Grass, int Layer)>();
+            for (var index = 0; index < layers.Length; ++index)
             {
-                if (!grassByForm.TryGetValue(form, out var grass)) continue;
-                var requested = Mathf.Clamp((int)(grass.Density * 12.0f * densityScale), 24, 700);
-                var offsetX = (quadrant % QuadrantSide) * QuadrantLastVertex;
-                var offsetY = (quadrant / QuadrantSide) * QuadrantLastVertex;
-                var transforms = new List<Transform3D>(requested);
-                var attempts = 0;
-                while (transforms.Count < requested && attempts++ < requested * 4)
+                if (!source.Textures.TryGetValue(layers[index].Texture, out var texture) ||
+                    texture.Grass is not { } grasses) continue;
+                foreach (var grass in grasses) choices.Add((grass, index));
+            }
+            if (choices.Count == 0) continue;
+            var requested = choices.Sum(choice =>
+                Mathf.Clamp((int)(choice.Grass.Density * 4.0f * densityScale), 12, 250));
+            requested = Mathf.Clamp(requested, 12, 600);
+            var offsetX = (quadrant % QuadrantSide) * QuadrantLastVertex;
+            var offsetY = (quadrant / QuadrantSide) * QuadrantLastVertex;
+            var pending = new Dictionary<FalloutFormKey, List<Transform3D>>();
+            var attempts = 0;
+            var accepted = 0;
+            while (accepted < requested && attempts++ < requested * 4)
+            {
+                var sx = (float)random.NextDouble() * QuadrantLastVertex;
+                var sy = (float)random.NextDouble() * QuadrantLastVertex;
+                var sampled = GrassWeights(weights, sx, sy);
+                var dominantLayer = 0;
+                for (var candidate = 1; candidate < sampled.Length; ++candidate)
+                    if (sampled[candidate] > sampled[dominantLayer]) dominantLayer = candidate;
+                var dominant = source.Textures[layers[dominantLayer].Texture].LandscapeTextureEditorId
+                    .ToLowerInvariant();
+                if (dominant.Contains("road") || dominant.Contains("path") || dominant.Contains("asphalt") ||
+                    dominant.Contains("sidewalk") || dominant.Contains("concrete") || dominant.Contains("street") ||
+                    dominant.Contains("pavement") || dominant.Contains("lakebed") || dominant.Contains("drylake"))
+                    continue;
+                var grassWeight = 0.0f;
+                var candidates = new List<(FalloutGrass Grass, float Weight)>();
+                foreach (var (grass, layer) in choices)
                 {
-                    var sx = offsetX + (float)random.NextDouble() * QuadrantLastVertex;
-                    var sy = offsetY + (float)random.NextDouble() * QuadrantLastVertex;
-                    var normal = GrassNormal(source, sx, sy);
-                    var slope = Mathf.RadToDeg(Mathf.Acos(Mathf.Clamp(normal.Y, -1.0f, 1.0f)));
-                    if (slope < grass.MinSlope || slope > grass.MaxSlope) continue;
-                    var height = GrassHeight(source, sx, sy);
-                    var scale = Mathf.Max(0.1f, 1.0f + ((float)random.NextDouble() * 2.0f - 1.0f) * grass.HeightRange);
-                    var yaw = (float)random.NextDouble() * Mathf.Tau;
-                    var position = new Vector3(
-                        (cellX + sx * FalloutLandscapeTransportResolver.VertexSpacingGameUnits) * units,
-                        height * units,
-                        -(cellY + sy * FalloutLandscapeTransportResolver.VertexSpacingGameUnits) * units);
-                    transforms.Add(new Transform3D(new Basis(Vector3.Up, yaw).Scaled(Vector3.One * scale), position));
+                    var weight = sampled[layer];
+                    if (weight <= 0.001f) continue;
+                    grassWeight += weight;
+                    candidates.Add((grass, weight));
                 }
-                if (transforms.Count == 0) continue;
+                // Require grass to be a meaningful share of the surface; this
+                // suppresses roads, concrete, dry lake beds and water margins.
+                if (grassWeight < 0.35f || candidates.Count == 0) continue;
+                var target = random.NextDouble() * candidates.Sum(candidate =>
+                    candidate.Weight * Math.Max(1.0f, candidate.Grass.Density));
+                var pick = candidates[0].Grass;
+                var cursor = 0.0;
+                foreach (var candidate in candidates)
+                {
+                    cursor += candidate.Weight * Math.Max(1.0f, candidate.Grass.Density);
+                    if (cursor >= target) { pick = candidate.Grass; break; }
+                }
+                var gridX = offsetX + sx;
+                var gridY = offsetY + sy;
+                var height = GrassHeight(source, gridX, gridY);
+                if (source.WaterHeight is float waterHeight && height <= waterHeight + 4.0f) continue;
+                if (suppression is not null)
+                {
+                    var grassX = cellX + gridX * FalloutLandscapeTransportResolver.VertexSpacingGameUnits;
+                    var grassY = cellY + gridY * FalloutLandscapeTransportResolver.VertexSpacingGameUnits;
+                    var blocked = false;
+                    foreach (var (center, radius) in suppression)
+                        if ((grassX - center.X) * (grassX - center.X) + (grassY - center.Y) * (grassY - center.Y) < radius * radius)
+                        { blocked = true; break; }
+                    if (blocked) continue;
+                }
+                var normal = GrassNormal(source, gridX, gridY);
+                var slope = Mathf.RadToDeg(Mathf.Acos(Mathf.Clamp(normal.Y, -1.0f, 1.0f)));
+                if (slope < pick.MinSlope || slope > pick.MaxSlope) continue;
+                var scale = Mathf.Max(0.1f, 1.0f + ((float)random.NextDouble() * 2.0f - 1.0f) * pick.HeightRange);
+                var yaw = (float)random.NextDouble() * Mathf.Tau;
+                var position = new Vector3(
+                    (cellX + gridX * FalloutLandscapeTransportResolver.VertexSpacingGameUnits) * units,
+                    height * units,
+                    -(cellY + gridY * FalloutLandscapeTransportResolver.VertexSpacingGameUnits) * units);
+                if (!pending.TryGetValue(pick.Form, out var transforms))
+                    pending.Add(pick.Form, transforms = new List<Transform3D>());
+                transforms.Add(new Transform3D(new Basis(Vector3.Up, yaw).Scaled(Vector3.One * scale), position));
+                accepted++;
+            }
+            foreach (var (form, transforms) in pending)
+            {
+                var grass = choices.First(choice => choice.Grass.Form == form).Grass;
                 if (!TryGrassPrototype(content, grass.ModelPath, units, out var mesh, out var material)) continue;
                 var multimesh = new MultiMesh
                 {
@@ -340,6 +394,29 @@ internal static class RuntimeNativeLandscapeTransportBuilder
                 root.AddChild(instance);
             }
         }
+    }
+
+    private static float[] GrassWeights(float[][] weights, float x, float y)
+    {
+        var side = FalloutLandscapeTransportResolver.QuadrantVertexSide;
+        var maximum = side - 1;
+        var x0 = Math.Clamp((int)MathF.Floor(x), 0, maximum);
+        var y0 = Math.Clamp((int)MathF.Floor(y), 0, maximum);
+        var x1 = Math.Min(x0 + 1, maximum);
+        var y1 = Math.Min(y0 + 1, maximum);
+        var fx = Mathf.Clamp(x - x0, 0.0f, 1.0f);
+        var fy = Mathf.Clamp(y - y0, 0.0f, 1.0f);
+        var result = new float[weights.Length];
+        for (var layer = 0; layer < weights.Length; ++layer)
+        {
+            var row = weights[layer];
+            var v00 = row[y0 * side + x0];
+            var v10 = row[y0 * side + x1];
+            var v01 = row[y1 * side + x0];
+            var v11 = row[y1 * side + x1];
+            result[layer] = Mathf.Lerp(Mathf.Lerp(v00, v10, fx), Mathf.Lerp(v01, v11, fx), fy);
+        }
+        return result;
     }
 
     private static float GrassHeight(FalloutLandscapeTransport source, float x, float y)

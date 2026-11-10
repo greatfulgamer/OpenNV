@@ -242,7 +242,8 @@ public partial class RuntimeCoordinator
             _nativeGridUploads.Enqueue((cell.FormKey.ToString(), () =>
             {
                 var land = RuntimeNativeLandscapeTransportBuilder.Build(prepared.Landscapes[cell.FormKey],
-                    _configuration.World.GameUnitsToMeters, _nativeLandscapeTextures, GrassDensity());
+                    _configuration.World.GameUnitsToMeters, _nativeLandscapeTextures, GrassDensity(),
+                    GrassSuppression(grid.Scene, cell.Coordinates));
                 root.AddChild(land); GamebryoReferenceEnableRuntime.Apply(land, false); _nativeGridStaged.Add(land);
                 return true;
             }
@@ -431,7 +432,8 @@ public partial class RuntimeCoordinator
             var source = FalloutLandscapeTransportResolver.ResolveCell(_nativePluginStack!, cell, grid.PersistentCell);
             if (source is null) continue;
             root.AddChild(RuntimeNativeLandscapeTransportBuilder.Build(
-                source, _configuration.World.GameUnitsToMeters, _nativeLandscapeTextures, GrassDensity()));
+                source, _configuration.World.GameUnitsToMeters, _nativeLandscapeTextures, GrassDensity(),
+                GrassSuppression(grid.Scene, cell.Coordinates)));
         }
         AddExteriorWater(root, grid);
         CompleteExteriorLandscape(root, grid);
@@ -447,12 +449,45 @@ public partial class RuntimeCoordinator
         _ => "high",
     };
 
-    private float GrassDensity() => EnvironmentTier() switch
+    private static IReadOnlyList<(Vector2 Center, float Radius)> GrassSuppression(
+        FalloutCellScene scene, (int X, int Y)? coordinates)
     {
-        "low" => 0.0f,
-        "medium" => 0.5f,
-        _ => 1.0f,
-    };
+        if (coordinates is not { } cell) return [];
+        var centerX = (cell.X + 0.5f) * FalloutLandscapeTransportResolver.ExteriorCellSideGameUnits;
+        var centerY = (cell.Y + 0.5f) * FalloutLandscapeTransportResolver.ExteriorCellSideGameUnits;
+        var result = new List<(Vector2 Center, float Radius)>();
+        foreach (var reference in scene.References)
+        {
+            var model = scene.BaseObjects[reference.Base].ModelPath;
+            if (model is null) continue;
+            var path = model.ToLowerInvariant();
+            float radius;
+            if (path.Contains("landscape\\roads\\")) radius = 1024.0f;
+            else if (path.Contains("sidewalk") || path.Contains("streetdressing")) radius = 384.0f;
+            else if (path.Contains("architecture\\urban") || path.Contains("architecture\\wasteland")) radius = 512.0f;
+            else continue;
+            var x = reference.Position[0];
+            var y = reference.Position[1];
+            if (Math.Abs(x - centerX) > 6144.0f || Math.Abs(y - centerY) > 6144.0f) continue;
+            result.Add((new Vector2(x, y), radius * Math.Max(0.5f, reference.Scale)));
+        }
+        return result;
+    }
+
+    private float GrassDensity()
+    {
+        var density = EnvironmentTier() switch
+        {
+            "low" => 0.0f,
+            "medium" => 0.5f,
+            _ => 1.0f,
+        };
+        if (_options.TryGetValue("grass-density", out var value) &&
+            float.TryParse(value, System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var scale))
+            density *= Mathf.Clamp(scale, 0.0f, 1.0f);
+        return density;
+    }
 
     private ShaderMaterial NativeWaterMaterial()
     {
