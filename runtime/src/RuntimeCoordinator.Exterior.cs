@@ -543,7 +543,13 @@ public partial class RuntimeCoordinator
             units,
             now => NativeWaterMaterial().RenderPriority = now ? 1 : 0,
             (now, belowMeters) => root.GetNodeOrNull<RuntimeNativeExteriorEnvironment>("ExteriorSkyOwner")
-                ?.SetUnderwater(now, belowMeters));
+                ?.SetUnderwater(now, belowMeters),
+            () =>
+            {
+                var hour = _nativeGameTime?.Hour ?? 12.0f;
+                var angle = (hour - 6.0f) * MathF.PI / 12.0f;
+                return new Vector3(MathF.Cos(angle), MathF.Sin(angle), 0);
+            });
         var waterSubdivisions = EnvironmentTier() switch { "low" => 8, "medium" => 16, _ => 32 };
         foreach (var cell in grid.Cells)
         {
