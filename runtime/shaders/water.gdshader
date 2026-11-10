@@ -11,8 +11,8 @@ uniform sampler2D depth_texture : hint_depth_texture;
 uniform sampler2D screen_texture : hint_screen_texture, filter_linear_mipmap, repeat_disable;
 
 uniform float depth_scale = 4.0;
-uniform float refraction_strength = 0.55;
-uniform float normal_scale = 0.35;
+uniform float refraction_strength = 0.40;
+uniform float normal_scale = 0.22;
 uniform float time_scale = 2.0;
 uniform float uv_scale = 1.2;
 uniform float fresnel_power = 5.0;
@@ -92,8 +92,8 @@ float caustic_veins(vec2 p, float t) {
 void fragment() {
 	vec2 uv = world_uv.xz * uv_scale;
 	float t = TIME * time_scale;
-	float dx = sin(t + (uv.x + uv.y) * 25.0) * 0.014;
-	float dy = cos(t + (uv.x - uv.y) * 25.0) * 0.014;
+	float dx = sin(t + (uv.x + uv.y) * 25.0) * 0.008;
+	float dy = cos(t + (uv.x - uv.y) * 25.0) * 0.008;
 	vec2 duv = uv + vec2(dx, dy);
 
 	vec3 n1 = texture(water_noise_1, duv * 0.8).rgb * 2.0 - 1.0;
@@ -132,7 +132,10 @@ void fragment() {
 		float caustic = 0.0;
 		if (caustics_quality > 0.0) {
 			// Slower animation and an early-out keep the surface calm and cheap.
+			// Barely visible when looking straight down; keep the hint at grazing angles.
+			float topdown = clamp(abs(normalize(VIEW).y), 0.0, 1.0);
 			caustic = caustic_veins(world_uv.xz, TIME * 0.55) * caustics_quality * caustics_strength
+				* (1.0 - 0.75 * topdown)
 				* (1.0 - smoothstep(0.0, depth_scale * 1.5, thickness))
 				* max(normalize(sun_direction).y, 0.0);
 			base += sun_color * vec3(0.75, 0.95, 0.85) * caustic;
