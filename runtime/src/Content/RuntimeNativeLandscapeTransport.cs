@@ -161,7 +161,7 @@ internal static class RuntimeNativeLandscapeTransportBuilder
             else fragment.AppendLine($"normal_sample += vec3(0.0,0.0,1.0) * {Weight(index + 1)};");
         }
         shader.Append(vertex).AppendLine("}").Append(fragment)
-            .AppendLine("ALBEDO = albedo * COLOR.rgb; EMISSION = ALBEDO * owned_environment_ambient(); NORMAL_MAP = normalize(normal_sample) * 0.5 + 0.5; FOG = vec4(owned_environment_fog_color(), source_fog_factor); }");
+            .AppendLine("ALBEDO = albedo * COLOR.rgb; EMISSION = ALBEDO * owned_environment_ambient(); if (opennv_underwater_strength > 0.0) EMISSION += ALBEDO * opennv_underwater_light * owned_underwater_caustic((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz); NORMAL_MAP = normalize(normal_sample) * 0.5 + 0.5; FOG = vec4(owned_environment_fog_color(), source_fog_factor); }");
         RetailLighting.AppendDiffuseLightFunction(shader);
         var code = shader.ToString();
         if (!Shaders.TryGetValue(code, out var compiled)) Shaders.Add(code, compiled = new Shader { Code = code });

@@ -24,6 +24,7 @@ internal partial class RuntimeNativeExteriorEnvironment : Node
     private bool _lightingBound;
     private bool _underwater;
     private float _underwaterDepth;
+    private bool _underwaterCaustics = true;
     private float _shadowDistance = 100;
     private bool _useSkyShader;
     private bool _suppressSky;
@@ -45,11 +46,12 @@ internal partial class RuntimeNativeExteriorEnvironment : Node
 
     internal void Configure(FalloutPluginStack records, FalloutSkyLightingState sky, Func<float> hour, float units,
         Node? sceneRoot = null, float shadowDistance = 100, bool useSkyShader = false, string? skyShaderPath = null,
-        bool suppressSky = false)
+        bool suppressSky = false, bool underwaterCaustics = true)
     {
         _useSkyShader = useSkyShader;
         _skyShaderPath = skyShaderPath;
         _suppressSky = suppressSky;
+        _underwaterCaustics = underwaterCaustics;
         if (!float.IsFinite(shadowDistance) || shadowDistance <= 0)
             throw new InvalidDataException("Exterior shadow distance must cover a positive finite region.");
         _records = records; _sky = sky; _hour = hour; _units = units; _sceneRoot = sceneRoot; _shadowDistance = shadowDistance;
@@ -204,6 +206,12 @@ internal partial class RuntimeNativeExteriorEnvironment : Node
         _underwaterDepth = depthMeters;
         // Force the next Sample to republish retail fog after surfacing.
         _lightingBound = false;
+        RenderingServer.GlobalShaderParameterSet("opennv_underwater_light", new Vector3(0.6f, 0.95f, 1.0f));
+        var causticStrength = underwater && _underwaterCaustics
+            ? Mathf.Clamp(1.10f - depthMeters * 0.015f, 0.45f, 1.10f)
+            : 0.0f;
+        RenderingServer.GlobalShaderParameterSet("opennv_underwater_strength", causticStrength);
+        GD.Print($"OPENNV_UNDERWATER_CAUSTICS strength={causticStrength:F2} depth={depthMeters:F1} enabled={_underwaterCaustics}");
         Sample();
         SetMeta("opennv_underwater_fog", underwater);
     }

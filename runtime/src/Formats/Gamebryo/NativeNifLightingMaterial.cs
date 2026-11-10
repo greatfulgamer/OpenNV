@@ -116,6 +116,8 @@ internal static class NativeNifLightingMaterial
                 EMISSION = lit * (owned_environment_ambient() + owned_point_irradiance(VERTEX, NORMAL, VIEW, false));
                 if (!use_hair) EMISSION += glow * owned_emissive_color(emissive_color * emissive_multiple, emissive_multiple);
                 if (!environment_light_fade) EMISSION += reflection;
+                if (opennv_underwater_strength > 0.0)
+                    EMISSION += lit * opennv_underwater_light * owned_underwater_caustic((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz);
                 EMISSION = owned_output_color(EMISSION);
                 FOG = vec4(owned_environment_fog_color(), source_fog_factor);
                 {{(state.Blend == FalloutNifBlendMode.Opaque ? "" : state.Blend is FalloutNifBlendMode.AddOne or FalloutNifBlendMode.Replace ? "ALPHA = 1.0;" : "ALPHA *= base.a;")}}

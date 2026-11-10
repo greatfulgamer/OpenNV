@@ -643,7 +643,7 @@ public partial class RuntimeCoordinator
         // Cover the complete resident square, including its diagonal when the
         // player crosses an anchor boundary. Engine defaults cut this at 100m.
         var shadowDistance = (diameter / 2 + 1) * 4096 * _configuration.World.GameUnitsToMeters * MathF.Sqrt(2);
-        sky.Configure(_nativePluginStack!, _nativeSkyLighting!, () => _nativeGameTime!.Hour, _configuration.World.GameUnitsToMeters, this, shadowDistance, _options.ContainsKey("sky-shader") || _options.ContainsKey("sky-simple"), _options.ContainsKey("sky-simple") ? "res://shaders/sky_simple.gdshader" : "res://shaders/sky_sorta.gdshader", _options.ContainsKey("sky-dome"));
+        sky.Configure(_nativePluginStack!, _nativeSkyLighting!, () => _nativeGameTime!.Hour, _configuration.World.GameUnitsToMeters, this, shadowDistance, _options.ContainsKey("sky-shader") || _options.ContainsKey("sky-simple"), _options.ContainsKey("sky-simple") ? "res://shaders/sky_simple.gdshader" : "res://shaders/sky_sorta.gdshader", _options.ContainsKey("sky-dome"), EnvironmentTier() != "low");
         root.AddChild(sky);
         if (_options.ContainsKey("sky-dome"))
         {

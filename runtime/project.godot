@@ -55,6 +55,14 @@ opennv_lod_camera_xz={
 "type": "vec2",
 "value": Vector2(0, 0)
 }
+opennv_underwater_strength={
+"type": "float",
+"value": 0.0
+}
+opennv_underwater_light={
+"type": "vec3",
+"value": Vector3(0.35, 0.62, 0.68)
+}
 
 [xr]
 
