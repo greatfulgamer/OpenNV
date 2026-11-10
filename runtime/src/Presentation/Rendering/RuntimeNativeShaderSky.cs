@@ -27,6 +27,8 @@ internal partial class RuntimeNativeShaderSky : Node3D
     private ShaderMaterial? _material;
     private string _lastWeather = "";
     private Palette _palette = DefaultPalette();
+    private float _cirrusCoverage = 0.25f;
+    private float _cirrusOpacity = 0.18f;
     private int _debugFrames;
 
     private static Palette DefaultPalette() => new(
@@ -107,11 +109,17 @@ internal partial class RuntimeNativeShaderSky : Node3D
         _material.SetShaderParameter("cloud_shadow_color", shadow);
         _material.SetShaderParameter("sun_direction", sun);
         _material.SetShaderParameter("sun_glow", _palette.Glow * (0.05f + 0.95f * day) + dusk * 0.5f);
-        _material.SetShaderParameter("cloud_coverage", _palette.Coverage);
+        // Midday clouds should read thin and wispy (cirrus/cirrostratus), not
+        // puffy; dawn/dusk and night keep the weather palette's shape.
+        var wispy = Mathf.Clamp(day * (1.0f - dusk), 0.0f, 1.0f);
+        _material.SetShaderParameter("cloud_coverage", Mathf.Lerp(_palette.Coverage, 0.12f, wispy));
         _material.SetShaderParameter("cloud_brightness", _palette.Brightness * (0.18f + 0.82f * day + 0.45f * dusk));
-        _material.SetShaderParameter("cloud_softness", _palette.Softness);
+        _material.SetShaderParameter("cloud_softness", Mathf.Lerp(_palette.Softness, 0.92f, wispy));
+        _material.SetShaderParameter("cloud_sharpness", Mathf.Lerp(0.16f, 0.03f, wispy));
         _material.SetShaderParameter("cloud_speed", _palette.Speed);
         _material.SetShaderParameter("cloud_scale", _palette.Scale);
+        _material.SetShaderParameter("cirrus_coverage", Mathf.Lerp(_cirrusCoverage, Mathf.Max(_cirrusCoverage, 0.70f), wispy));
+        _material.SetShaderParameter("cirrus_opacity", Mathf.Lerp(_cirrusOpacity, Mathf.Max(_cirrusOpacity, 1.0f), wispy));
         var star = night * (1.0f - Mathf.Clamp(_palette.Coverage, 0.0f, 0.85f));
         _material.SetShaderParameter("star_intensity", star * 1.2f);
     }
@@ -150,6 +158,8 @@ internal partial class RuntimeNativeShaderSky : Node3D
         };
         _material.SetShaderParameter("cirrus_coverage", cirrusCoverage);
         _material.SetShaderParameter("cirrus_opacity", cirrusOpacity);
+        _cirrusCoverage = cirrusCoverage;
+        _cirrusOpacity = cirrusOpacity;
         GD.Print($"OPENNV_NATIVE_SHADER_SKY weather={id} coverage={_palette.Coverage:F2}");
     }
 }

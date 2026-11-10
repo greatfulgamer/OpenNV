@@ -57,41 +57,36 @@ vec3 sample_refraction(vec2 uv, float blur_px) {
 }
 
 vec2 caustic_hash(vec2 p) {
-	p = vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)));
-	return fract(sin(p) * 43758.5453);
+	vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+	p3 += dot(p3, p3.yzx + 33.33);
+	return fract((p3.xx + p3.yz) * p3.zy);
 }
 
-// Cellular (voronoi F2-F1) caustic network. Two animated layers at different
-// scales replace the old concentric sine rings, which read as synthetic.
+// One voronoi layer plus a cheap ripple breakup: same organic look at roughly
+// half the per-pixel cost of the old two-layer network.
 float caustic_veins(vec2 p, float t) {
 	vec2 q = p * caustics_scale;
-	float result = 0.0;
-	for (int layer = 0; layer < 2; ++layer) {
-		float scale = layer == 0 ? 1.0 : 1.7;
-		float speed = layer == 0 ? 0.35 : -0.22;
-		vec2 s = q * scale + vec2(t * speed, t * speed * 0.6);
-		if (layer == 1) s = mat2(vec2(0.80, 0.60), vec2(-0.60, 0.80)) * s + vec2(4.3, 9.1);
-		// Low-frequency warp keeps the cells from reading as a regular grid.
-		s += 0.22 * vec2(sin(s.y * 0.9 + t * 0.25), cos(s.x * 0.8 - t * 0.2));
-		vec2 n = floor(s);
-		vec2 f = fract(s);
-		float d1 = 8.0;
-		float d2 = 8.0;
-		for (int j = -1; j <= 1; ++j) {
-			for (int i = -1; i <= 1; ++i) {
-				vec2 g = vec2(float(i), float(j));
-				vec2 o = caustic_hash(n + g + float(layer) * 19.0);
-				o = 0.5 + 0.5 * sin(t * speed * 1.7 + 6.2831853 * o);
-				vec2 r = g + o - f;
-				float d = dot(r, r);
-				if (d < d1) { d2 = d1; d1 = d; }
-				else if (d < d2) { d2 = d; }
-			}
+	vec2 s = q + vec2(t * 0.22, t * 0.14);
+	s += 0.20 * vec2(sin(s.y * 0.8 + t * 0.2), cos(s.x * 0.7 - t * 0.17));
+	vec2 n = floor(s);
+	vec2 f = fract(s);
+	float d1 = 8.0;
+	float d2 = 8.0;
+	for (int j = -1; j <= 1; ++j) {
+		for (int i = -1; i <= 1; ++i) {
+			vec2 g = vec2(float(i), float(j));
+			vec2 o = caustic_hash(n + g);
+			o = 0.5 + 0.5 * sin(t * 1.7 + 6.2831853 * o);
+			vec2 r = g + o - f;
+			float d = dot(r, r);
+			if (d < d1) { d2 = d1; d1 = d; }
+			else if (d < d2) { d2 = d; }
 		}
-		float edge = sqrt(d2) - sqrt(d1);
-		result += pow(1.0 - clamp(edge * 2.2, 0.0, 1.0), 3.0);
 	}
-	return clamp(result * 0.5, 0.0, 1.0);
+	float edge = sqrt(d2) - sqrt(d1);
+	float line = pow(1.0 - clamp(edge * 2.4, 0.0, 1.0), 3.0);
+	float ripple = 0.5 + 0.5 * sin(q.x * 2.6 + sin(q.y * 2.3 + t * 0.35) * 1.8 + t * 0.4);
+	return clamp(line * (0.65 + 0.35 * ripple), 0.0, 1.0);
 }
 
 void fragment() {
@@ -111,7 +106,7 @@ void fragment() {
 		vec3 toward_surface = normalize(world_uv.xyz - CAMERA_POSITION_WORLD);
 		float zenith = clamp(toward_surface.y, 0.0, 1.0);
 		// A wide transition hides the screen-space edge that can read as tearing.
-		float window = smoothstep(0.48, 0.88, zenith);
+		float window = smoothstep(0.30, 0.98, zenith);
 		vec3 sky = mix(sky_color * 1.05, sky_color * 1.30, pow(zenith, 3.0));
 		vec3 under = mix(deep_color * 0.30, sky, window);
 		under *= 0.92 + 0.08 * n1.x;
@@ -134,10 +129,14 @@ void fragment() {
 		vec3 refraction = sample_refraction(suv, deep * refraction_blur * refraction_quality);
 		vec3 base = mix(water, refraction, refraction_strength * (1.0 - deep));
 
-		float caustic = caustic_veins(world_uv.xz, t) * caustics_quality * caustics_strength
-			* (1.0 - smoothstep(0.0, depth_scale * 1.5, thickness))
-			* max(normalize(sun_direction).y, 0.0);
-		base += sun_color * vec3(0.75, 0.95, 0.85) * caustic;
+		float caustic = 0.0;
+		if (caustics_quality > 0.0) {
+			// Slower animation and an early-out keep the surface calm and cheap.
+			caustic = caustic_veins(world_uv.xz, TIME * 0.55) * caustics_quality * caustics_strength
+				* (1.0 - smoothstep(0.0, depth_scale * 1.5, thickness))
+				* max(normalize(sun_direction).y, 0.0);
+			base += sun_color * vec3(0.75, 0.95, 0.85) * caustic;
+		}
 
 		float grazing = 1.0 - clamp(abs(normalize(VIEW).y), 0.0, 1.0);
 		float fresnel = pow(grazing, fresnel_power);
