@@ -1112,6 +1112,10 @@ public partial class RuntimeCoordinator
         }
         if (baseObject.ModelPath is null)
             return;
+        if (baseObject.ModelPath.Contains("statue", StringComparison.OrdinalIgnoreCase))
+            GD.Print($"OPENNV_STATUE_REF ref={reference.FormKey} base={baseObject.FormKey} " +
+                $"pos={reference.Position[0]:F1},{reference.Position[1]:F1},{reference.Position[2]:F1} " +
+                $"rot={reference.RotationRadians[0]:F3},{reference.RotationRadians[1]:F3},{reference.RotationRadians[2]:F3}");
         if (!_nativeNifPrototypes.TryGetValue(baseObject.ModelPath, out var prototype))
         {
             if (!source.TryRead(baseObject.ModelPath, null, out var nif, out var nifSource))

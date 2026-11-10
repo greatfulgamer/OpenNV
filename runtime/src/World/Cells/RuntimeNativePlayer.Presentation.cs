@@ -116,6 +116,25 @@ internal partial class RuntimeNativePlayer
     public override void _Process(double delta)
     {
         if (!GetTree().Paused) AdvancePendingProjectileImpacts((float)delta);
+        if (!GetTree().Paused && _xr is null && !_modalInput && _lookingEnabled && _furniturePhase == 0 &&
+            Input.MouseMode == Input.MouseModeEnum.Captured)
+        {
+            var yaw = (Input.IsPhysicalKeyPressed(Key.Left) ? 1.0f : 0.0f) -
+                      (Input.IsPhysicalKeyPressed(Key.Right) ? 1.0f : 0.0f);
+            var pitch = (Input.IsPhysicalKeyPressed(Key.Up) ? 1.0f : 0.0f) -
+                        (Input.IsPhysicalKeyPressed(Key.Down) ? 1.0f : 0.0f);
+            if (yaw != 0.0f || pitch != 0.0f)
+            {
+                const float speed = 2.2f;
+                var step = speed * (float)delta;
+                RotateY(yaw * step);
+                _pitchRadians = Math.Clamp(_pitchRadians + pitch * step,
+                    -_configuration.Player.VerticalLookLimitRadians,
+                    _configuration.Player.VerticalLookLimitRadians);
+                if (_sourceCamera is { } authored) ApplySourceCamera(authored);
+                else _camera.Rotation = new Vector3(_pitchRadians, 0.0f, 0.0f);
+            }
+        }
         if (_presentationRecords is null) return;
         var active = !_modalInput && _sourceCamera is null && _furniturePhase == 0 && _movementEnabled;
         if (_firstPersonPixels is not null) _firstPersonPixels.Visible = _presentationError is null && active && !_thirdPersonMode && (_firstPerson?.Weapon is null || _weaponHandling!.Drawn || _weaponAction is not null);
