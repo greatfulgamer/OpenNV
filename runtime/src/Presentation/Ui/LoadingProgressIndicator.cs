@@ -34,12 +34,12 @@ internal sealed partial class LoadingProgressIndicator : HBoxContainer
         var text = new VBoxContainer();
         AddChild(text);
         _status = new Label { Text = status };
-        _status.AddThemeColorOverride("font_color", new Color(0.66f, 0.95f, 0.50f));
-        _status.AddThemeFontSizeOverride("font_size", 20);
+        _status.AddThemeColorOverride("font_color", new Color(0.92f, 0.90f, 0.82f));
+        _status.AddThemeFontSizeOverride("font_size", 21);
         text.AddChild(_status);
         _elapsed = new Label { Text = "0s elapsed" };
-        _elapsed.AddThemeColorOverride("font_color", new Color(0.66f, 0.76f, 0.64f));
-        _elapsed.AddThemeFontSizeOverride("font_size", 14);
+        _elapsed.AddThemeColorOverride("font_color", new Color(0.55f, 0.60f, 0.55f));
+        _elapsed.AddThemeFontSizeOverride("font_size", 13);
         text.AddChild(_elapsed);
     }
 
@@ -84,8 +84,8 @@ internal sealed partial class LoadingProgressIndicator : HBoxContainer
         {
             var center = Size / 2;
             var angle = (float)(Time.GetTicksMsec() % 1200) / 1200 * Mathf.Tau;
-            DrawArc(center, 12, 0, Mathf.Tau, 48, new Color(0.25f, 0.32f, 0.24f), 2.5f, true);
-            DrawArc(center, 12, angle, angle + Mathf.Pi * 1.5f, 36, new Color(0.66f, 0.95f, 0.50f), 2.5f, true);
+            DrawArc(center, 12, 0, Mathf.Tau, 48, new Color(0.30f, 0.28f, 0.22f), 2.5f, true);
+            DrawArc(center, 12, angle, angle + Mathf.Pi * 1.5f, 36, new Color(0.92f, 0.70f, 0.34f), 2.5f, true);
         }
     }
 }
