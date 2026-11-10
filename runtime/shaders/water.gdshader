@@ -70,6 +70,9 @@ float caustic_veins(vec2 p, float t) {
 		float scale = layer == 0 ? 1.0 : 1.7;
 		float speed = layer == 0 ? 0.35 : -0.22;
 		vec2 s = q * scale + vec2(t * speed, t * speed * 0.6);
+		if (layer == 1) s = mat2(vec2(0.80, 0.60), vec2(-0.60, 0.80)) * s + vec2(4.3, 9.1);
+		// Low-frequency warp keeps the cells from reading as a regular grid.
+		s += 0.22 * vec2(sin(s.y * 0.9 + t * 0.25), cos(s.x * 0.8 - t * 0.2));
 		vec2 n = floor(s);
 		vec2 f = fract(s);
 		float d1 = 8.0;
@@ -77,7 +80,7 @@ float caustic_veins(vec2 p, float t) {
 		for (int j = -1; j <= 1; ++j) {
 			for (int i = -1; i <= 1; ++i) {
 				vec2 g = vec2(float(i), float(j));
-				vec2 o = caustic_hash(n + g);
+				vec2 o = caustic_hash(n + g + float(layer) * 19.0);
 				o = 0.5 + 0.5 * sin(t * speed * 1.7 + 6.2831853 * o);
 				vec2 r = g + o - f;
 				float d = dot(r, r);

@@ -148,8 +148,13 @@ void fragment() {
         vec3 cirrus_col = mix(cloud_shadow_color, cloud_color.rgb, 0.65) * cloud_brightness;
         col = mix(col, cirrus_col, cirrus * pow(horizon_fade, 1.4) * 0.85);
 
-        vec3 cloud_shade = mix(cloud_shadow_color, cloud_color.rgb, smoothstep(0.0, 0.75, cumulus));
+        vec3 cloud_shade = mix(cloud_shadow_color, cloud_color.rgb, smoothstep(0.0, 0.60, cumulus));
         vec3 cloud_final = cloud_shade * cloud_brightness;
+        // Rim-light the edges (especially at dusk) so silhouettes do not go
+        // near-black and band into visible dithering.
+        float cloud_edge = smoothstep(0.0, 0.30, cumulus) * (1.0 - smoothstep(0.30, 0.85, cumulus));
+        float rim = pow(max(dot(dir, sd), 0.0), 5.0);
+        cloud_final += sun_color * cloud_edge * (0.12 + 0.55 * dusk_amt) * (0.35 + 0.65 * rim);
         cloud_final += sun_color * pow(sun_dot, 4.0) * (0.05 + 0.30 * dusk_amt);
         col = mix(col, cloud_final, cumulus * 0.92 * horizon_fade);
     }

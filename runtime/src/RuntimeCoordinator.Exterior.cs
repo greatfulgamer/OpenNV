@@ -480,7 +480,7 @@ public partial class RuntimeCoordinator
         material.SetShaderParameter("foam_strength", 0.35f);
         material.SetShaderParameter("caustics_quality", low ? 0.0f : medium ? 0.45f : 0.70f);
         material.SetShaderParameter("caustics_strength", medium ? 0.30f : 0.38f);
-        material.SetShaderParameter("caustics_scale", 0.65f);
+        material.SetShaderParameter("caustics_scale", 0.32f);
         material.SetShaderParameter("ssr_quality", low ? 0.0f : medium ? 0.35f : 0.5f);
         material.SetShaderParameter("ssr_strength", 0.45f);
         material.SetShaderParameter("ssr_distance", low ? 20.0f : 32.0f);

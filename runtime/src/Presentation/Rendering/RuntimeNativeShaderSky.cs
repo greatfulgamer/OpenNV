@@ -108,7 +108,7 @@ internal partial class RuntimeNativeShaderSky : Node3D
         _material.SetShaderParameter("sun_direction", sun);
         _material.SetShaderParameter("sun_glow", _palette.Glow * (0.05f + 0.95f * day) + dusk * 0.5f);
         _material.SetShaderParameter("cloud_coverage", _palette.Coverage);
-        _material.SetShaderParameter("cloud_brightness", _palette.Brightness * (0.18f + 0.82f * day));
+        _material.SetShaderParameter("cloud_brightness", _palette.Brightness * (0.18f + 0.82f * day + 0.45f * dusk));
         _material.SetShaderParameter("cloud_softness", _palette.Softness);
         _material.SetShaderParameter("cloud_speed", _palette.Speed);
         _material.SetShaderParameter("cloud_scale", _palette.Scale);
