@@ -242,7 +242,7 @@ public partial class RuntimeCoordinator
             _nativeGridUploads.Enqueue((cell.FormKey.ToString(), () =>
             {
                 var land = RuntimeNativeLandscapeTransportBuilder.Build(prepared.Landscapes[cell.FormKey],
-                    _configuration.World.GameUnitsToMeters, _nativeLandscapeTextures);
+                    _configuration.World.GameUnitsToMeters, _nativeLandscapeTextures, GrassDensity());
                 root.AddChild(land); GamebryoReferenceEnableRuntime.Apply(land, false); _nativeGridStaged.Add(land);
                 return true;
             }
@@ -431,7 +431,7 @@ public partial class RuntimeCoordinator
             var source = FalloutLandscapeTransportResolver.ResolveCell(_nativePluginStack!, cell, grid.PersistentCell);
             if (source is null) continue;
             root.AddChild(RuntimeNativeLandscapeTransportBuilder.Build(
-                source, _configuration.World.GameUnitsToMeters, _nativeLandscapeTextures));
+                source, _configuration.World.GameUnitsToMeters, _nativeLandscapeTextures, GrassDensity()));
         }
         AddExteriorWater(root, grid);
         CompleteExteriorLandscape(root, grid);
@@ -445,6 +445,13 @@ public partial class RuntimeCoordinator
         "low" => "low",
         "medium" or "med" => "medium",
         _ => "high",
+    };
+
+    private float GrassDensity() => EnvironmentTier() switch
+    {
+        "low" => 0.0f,
+        "medium" => 0.5f,
+        _ => 1.0f,
     };
 
     private ShaderMaterial NativeWaterMaterial()

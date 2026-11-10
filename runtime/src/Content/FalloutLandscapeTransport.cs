@@ -24,7 +24,8 @@ internal sealed record FalloutLandscapeTexture(
     string TextureSetEditorId,
     string DiffusePath,
     string? NormalPath,
-    FalloutLandscapePhysics? Physics = null);
+    FalloutLandscapePhysics? Physics = null,
+    IReadOnlyList<FalloutGrass>? Grass = null);
 
 internal readonly record struct FalloutLandscapePhysics(byte Material, byte Friction, byte Restitution)
 {
@@ -343,6 +344,15 @@ internal static class FalloutLandscapeTransportResolver
             throw Error(txst, $"resolved LAND texture set {textureSetKey} is not TXST");
         var txstRows = txst.ReadSubrecords().ToArray();
         var physics = ltexRows.Where(row => row.Signature == "HNAM").ToArray();
+        var grassRows = ltexRows.Where(row => row.Signature == "GNAM").ToArray();
+        var grass = new List<FalloutGrass>();
+        foreach (var row in grassRows)
+        {
+            if (row.Data.Length != sizeof(uint)) continue;
+            if (ltex.Plugin.AdjustOptionalFormId(BinaryPrimitives.ReadUInt32LittleEndian(row.Data.Span)) is not { } grassKey)
+                continue;
+            grass.Add(FalloutGrass.Read(stack, grassKey));
+        }
         return new FalloutLandscapeTexture(
             key,
             ReadOptionalText(ltexRows, "EDID", ltex),
@@ -350,7 +360,8 @@ internal static class FalloutLandscapeTransportResolver
             ReadOptionalText(txstRows, "EDID", txst),
             NormalizeTexturePath(ReadRequiredText(txstRows, "TX00", txst)),
             ReadOptionalPath(txstRows, "TX01", txst),
-            physics.Length == 0 ? null : FalloutLandscapePhysics.Read(physics.Single().Data.Span));
+            physics.Length == 0 ? null : FalloutLandscapePhysics.Read(physics.Single().Data.Span),
+            grass.Count == 0 ? null : grass);
     }
 
     private static bool HasWorldspace(FalloutPluginRecord record, FalloutFormKey worldspace)

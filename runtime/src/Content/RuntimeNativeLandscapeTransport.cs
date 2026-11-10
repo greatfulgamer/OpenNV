@@ -32,7 +32,8 @@ internal static class RuntimeNativeLandscapeTransportBuilder
     internal static RuntimeNativeLandscapeTransport Build(
         FalloutLandscapeTransport source,
         float gameUnitsToMeters,
-        IDictionary<string, Texture2D>? decodedTextures = null)
+        IDictionary<string, Texture2D>? decodedTextures = null,
+        float grassDensity = 1.0f)
     {
         if (!float.IsFinite(gameUnitsToMeters) || gameUnitsToMeters <= 0.0f)
             throw new ArgumentOutOfRangeException(
@@ -106,6 +107,7 @@ internal static class RuntimeNativeLandscapeTransportBuilder
         collision.AddChild(collisionShape);
         root.AddChild(collision);
         NativeExteriorDetailBlend.Bind(root, terrain: true);
+        if (grassDensity > 0.0f) AddGrass(root, source, gameUnitsToMeters, grassDensity);
         return root;
     }
 
@@ -260,5 +262,143 @@ internal static class RuntimeNativeLandscapeTransportBuilder
         arrays[(int)Mesh.ArrayType.TexUV] = uvs;
         arrays[(int)Mesh.ArrayType.Index] = indices;
         return arrays;
+    }
+
+    private sealed record GrassPrototype(Mesh? Mesh, Material? Material);
+    private static readonly Dictionary<string, GrassPrototype> GrassPrototypes = new(StringComparer.OrdinalIgnoreCase);
+
+    private static void AddGrass(Node3D root, FalloutLandscapeTransport source, float units, float densityScale)
+    {
+        var content = RuntimeLiveContentSource.Current;
+        if (content is null) return;
+        var grassByForm = source.Textures.Values
+            .SelectMany(texture => texture.Grass ?? [])
+            .GroupBy(grass => grass.Form)
+            .ToDictionary(group => group.Key, group => group.First());
+        GD.Print($"OPENNV_NATIVE_GRASS cell={source.ActiveCell} textures={source.Textures.Count} types={grassByForm.Count}");
+        if (grassByForm.Count == 0) return;
+        var random = new Random(unchecked((int)source.ActiveCell.ObjectId) ^ 0x5EED);
+        var cellX = source.ActiveCoordinates.X * FalloutLandscapeTransportResolver.ExteriorCellSideGameUnits;
+        var cellY = source.ActiveCoordinates.Y * FalloutLandscapeTransportResolver.ExteriorCellSideGameUnits;
+        for (byte quadrant = 0; quadrant < QuadrantSide * QuadrantSide; ++quadrant)
+        {
+            var forms = new HashSet<FalloutFormKey>();
+            var basis = source.BaseLayers.Single(layer => layer.Quadrant == quadrant);
+            if (source.Textures[basis.Texture].Grass is { } baseGrass)
+                foreach (var grass in baseGrass) forms.Add(grass.Form);
+            foreach (var layer in source.AlphaLayers.Where(layer => layer.Quadrant == quadrant))
+                if (source.Textures[layer.Texture].Grass is { } alphaGrass)
+                    foreach (var grass in alphaGrass) forms.Add(grass.Form);
+            foreach (var form in forms)
+            {
+                if (!grassByForm.TryGetValue(form, out var grass)) continue;
+                var requested = Mathf.Clamp((int)(grass.Density * 12.0f * densityScale), 24, 700);
+                var offsetX = (quadrant % QuadrantSide) * QuadrantLastVertex;
+                var offsetY = (quadrant / QuadrantSide) * QuadrantLastVertex;
+                var transforms = new List<Transform3D>(requested);
+                var attempts = 0;
+                while (transforms.Count < requested && attempts++ < requested * 4)
+                {
+                    var sx = offsetX + (float)random.NextDouble() * QuadrantLastVertex;
+                    var sy = offsetY + (float)random.NextDouble() * QuadrantLastVertex;
+                    var normal = GrassNormal(source, sx, sy);
+                    var slope = Mathf.RadToDeg(Mathf.Acos(Mathf.Clamp(normal.Y, -1.0f, 1.0f)));
+                    if (slope < grass.MinSlope || slope > grass.MaxSlope) continue;
+                    var height = GrassHeight(source, sx, sy);
+                    var scale = Mathf.Max(0.1f, 1.0f + ((float)random.NextDouble() * 2.0f - 1.0f) * grass.HeightRange);
+                    var yaw = (float)random.NextDouble() * Mathf.Tau;
+                    var position = new Vector3(
+                        (cellX + sx * FalloutLandscapeTransportResolver.VertexSpacingGameUnits) * units,
+                        height * units,
+                        -(cellY + sy * FalloutLandscapeTransportResolver.VertexSpacingGameUnits) * units);
+                    transforms.Add(new Transform3D(new Basis(Vector3.Up, yaw).Scaled(Vector3.One * scale), position));
+                }
+                if (transforms.Count == 0) continue;
+                if (!TryGrassPrototype(content, grass.ModelPath, units, out var mesh, out var material)) continue;
+                var multimesh = new MultiMesh
+                {
+                    TransformFormat = MultiMesh.TransformFormatEnum.Transform3D,
+                    Mesh = mesh,
+                    InstanceCount = transforms.Count,
+                };
+                for (var index = 0; index < transforms.Count; ++index)
+                    multimesh.SetInstanceTransform(index, transforms[index]);
+                var instance = new MultiMeshInstance3D
+                {
+                    Name = $"Grass_{grass.EditorId}_{quadrant}",
+                    Multimesh = multimesh,
+                    CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+                    VisibilityRangeEnd = 140.0f,
+                    VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Self,
+                };
+                if (material is not null) instance.MaterialOverride = material;
+                instance.SetMeta("opennv_grass_form", form.ToString());
+                instance.SetMeta("opennv_grass_model", grass.ModelPath);
+                instance.SetMeta("opennv_grass_instances", transforms.Count);
+                instance.SetInstanceShaderParameter("source_exterior_environment", true);
+                instance.SetInstanceShaderParameter("opennv_detail_kind", 2);
+                root.AddChild(instance);
+            }
+        }
+    }
+
+    private static float GrassHeight(FalloutLandscapeTransport source, float x, float y)
+    {
+        var side = FalloutLandscapeTransportResolver.VertexSide;
+        var maximum = side - 1;
+        var x0 = Math.Clamp((int)MathF.Floor(x), 0, maximum);
+        var y0 = Math.Clamp((int)MathF.Floor(y), 0, maximum);
+        var x1 = Math.Min(x0 + 1, maximum);
+        var y1 = Math.Min(y0 + 1, maximum);
+        var fx = Mathf.Clamp(x - x0, 0.0f, 1.0f);
+        var fy = Mathf.Clamp(y - y0, 0.0f, 1.0f);
+        var h00 = source.Heights[y0 * side + x0];
+        var h10 = source.Heights[y0 * side + x1];
+        var h01 = source.Heights[y1 * side + x0];
+        var h11 = source.Heights[y1 * side + x1];
+        return Mathf.Lerp(Mathf.Lerp(h00, h10, fx), Mathf.Lerp(h01, h11, fx), fy);
+    }
+
+    private static Vector3 GrassNormal(FalloutLandscapeTransport source, float x, float y)
+    {
+        var side = FalloutLandscapeTransportResolver.VertexSide;
+        var maximum = side - 1;
+        var ix = Math.Clamp((int)MathF.Round(x), 0, maximum);
+        var iy = Math.Clamp((int)MathF.Round(y), 0, maximum);
+        var offset = (iy * side + ix) * 3;
+        return new Vector3(source.Normals[offset], source.Normals[offset + 2], -source.Normals[offset + 1]);
+    }
+
+    private static bool TryGrassPrototype(RuntimeLiveContentSource content, string path, float units,
+        out Mesh mesh, out Material? material)
+    {
+        if (GrassPrototypes.TryGetValue(path, out var cached))
+        {
+            mesh = cached.Mesh!;
+            material = cached.Material;
+            return cached.Mesh is not null;
+        }
+        mesh = null!;
+        material = null;
+        if (!content.TryRead(path, null, out var nif, out _))
+        {
+            GrassPrototypes[path] = new(null, null);
+            return false;
+        }
+        var prototype = new RuntimeNativeNifPrototype(nif, units);
+        var scene = prototype.Scene;
+        var instance = scene.Root.FindChildren("*", "", true, false).OfType<MeshInstance3D>()
+            .FirstOrDefault(value => value.Mesh is not null);
+        if (instance is null)
+        {
+            scene.Root.Free();
+            GrassPrototypes[path] = new(null, null);
+            return false;
+        }
+        mesh = instance.Mesh;
+        material = instance.GetActiveMaterial(0);
+        scene.Root.Free();
+        GrassPrototypes[path] = new(mesh, material);
+        return true;
     }
 }

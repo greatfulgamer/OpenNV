@@ -1844,6 +1844,26 @@ internal static partial class RuntimeNativeNifMeshBuilder
             return result;
         }
 
+        private Material BuildTallGrassMaterial(FalloutNifTallGrassShaderProperty tall, FalloutNifAlphaProperty? alpha)
+        {
+            Texture2D? texture = null;
+            try { texture = NativeOwnedMediaLoader.LoadTexture(tall.FileName); }
+            catch (Exception) { }
+            var material = new StandardMaterial3D
+            {
+                AlbedoTexture = texture,
+                Transparency = BaseMaterial3D.TransparencyEnum.AlphaScissor,
+                AlphaScissorThreshold = alpha is null ? 0.5f : alpha.Threshold / 255f,
+                CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+                VertexColorUseAsAlbedo = false,
+                Roughness = 1.0f,
+                Metallic = 0.0f,
+                SpecularMode = BaseMaterial3D.SpecularModeEnum.Disabled,
+            };
+            material.ResourceName = "Owned Tall Grass";
+            return material;
+        }
+
         private Material BuildMaterialCore(FalloutNifGeometry geometry, Color? hairColor, IReadOnlyList<string>? texturePaths)
         {
             if (NativeNifSkyMaterial.TryBuild(_source, geometry) is { } sky) return sky;
@@ -1854,6 +1874,7 @@ internal static partial class RuntimeNativeNifMeshBuilder
             FalloutNifAlphaProperty? alpha = null;
             FalloutNifTexturingProperty? texturing = null;
             FalloutNifStencilProperty? stencil = null;
+            FalloutNifTallGrassShaderProperty? tallGrass = null;
             foreach (var reference in geometry.Properties.Where(reference => reference != -1))
             {
                 switch (_source.ReadObject(reference))
@@ -1876,6 +1897,9 @@ internal static partial class RuntimeNativeNifMeshBuilder
                     case FalloutNifStencilProperty value when stencil is null:
                         stencil = value;
                         break;
+                    case FalloutNifTallGrassShaderProperty value when tallGrass is null:
+                        tallGrass = value;
+                        break;
                     case FalloutNifShaderProperty:
                         throw new NotSupportedException(
                             $"NIF geometry {geometry.Block.Index} has multiple lighting shaders.");
@@ -1894,11 +1918,16 @@ internal static partial class RuntimeNativeNifMeshBuilder
                     case FalloutNifStencilProperty:
                         throw new NotSupportedException(
                             $"NIF geometry {geometry.Block.Index} has multiple stencil properties.");
+                    case FalloutNifTallGrassShaderProperty:
+                        throw new NotSupportedException(
+                            $"NIF geometry {geometry.Block.Index} has multiple tall-grass shaders.");
                     default:
                         throw new NotSupportedException(
                             $"NIF geometry {geometry.Block.Index} has unsupported property block {reference}.");
                 }
             }
+            if (tallGrass is not null)
+                return BuildTallGrassMaterial(tallGrass, alpha);
             if (shader is null && noLighting is null)
                 return BuildVertexMaterialOnly(geometry, material, alpha, texturing, stencil);
             if (shader is not null && noLighting is not null)
@@ -2145,7 +2174,7 @@ internal static partial class RuntimeNativeNifMeshBuilder
             using var result = new StandardMaterial3D
             {
                 ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
-                VertexColorUseAsAlbedo = true,
+                VertexColorUseAsAlbedo = false,
                 AlbedoTexture = LoadTexture(texturePath, normal: false),
                 AlbedoColor = new Color(1.0f, 1.0f, 1.0f, material?.Alpha ?? 1.0f),
             };

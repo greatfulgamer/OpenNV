@@ -318,6 +318,7 @@ internal sealed partial class FalloutNifFile
             "BSShaderNoLightingProperty" => ReadNoLightingProperty(block, ref cursor),
             "TileShaderProperty" => ReadTileShaderProperty(block, ref cursor),
             "SkyShaderProperty" => ReadSkyShaderProperty(block, ref cursor),
+            "TallGrassShaderProperty" => ReadTallGrassShaderProperty(block, ref cursor),
             "BSMultiBound" => new FalloutNifMultiBound(block, ReadReference(ref cursor, "multi-bound data")),
             "BSMultiBoundAABB" => new FalloutNifMultiBoundBox(block, ReadVector(ref cursor, "bound center"), ReadVector(ref cursor, "bound size")),
             "NiAdditionalGeometryData" => ReadLandscapeMorphData(block, ref cursor),
@@ -1599,6 +1600,16 @@ internal sealed partial class FalloutNifFile
             cursor.ReadSizedUtf8("tile texture", checked((uint)cursor.Remaining)));
     }
 
+    private FalloutNifTallGrassShaderProperty ReadTallGrassShaderProperty(FalloutNifBlock block, ref NifCursor cursor)
+    {
+        var net = ReadObjectNet(ref cursor, block.TypeName);
+        return new(block, net.Name, net.ExtraData, net.Controller,
+            cursor.ReadUInt16("tall grass smooth flags"), cursor.ReadUInt32("tall grass shader type"),
+            cursor.ReadUInt32("tall grass shader flags"), cursor.ReadUInt32("tall grass shader flags 2"),
+            cursor.ReadFiniteSingle("tall grass environment scale"),
+            cursor.ReadSizedUtf8("tall grass texture", checked((uint)cursor.Remaining)));
+    }
+
     private FalloutNifSkyShaderProperty ReadSkyShaderProperty(FalloutNifBlock block, ref NifCursor cursor)
     {
         var net = ReadObjectNet(ref cursor, block.TypeName);
@@ -2432,6 +2443,11 @@ internal sealed record FalloutNifSkyShaderProperty(
     FalloutNifBlock Block, string Name, int[] ExtraData, int Controller,
     ushort Smooth, uint ShaderType, uint ShaderFlags, uint ShaderFlags2,
     float EnvironmentMapScale, uint TextureClampMode, string FileName, uint SkyObjectType) : FalloutNifObject(Block);
+
+internal sealed record FalloutNifTallGrassShaderProperty(
+    FalloutNifBlock Block, string Name, int[] ExtraData, int Controller,
+    ushort Smooth, uint ShaderType, uint ShaderFlags, uint ShaderFlags2,
+    float EnvironmentMapScale, string FileName) : FalloutNifObject(Block);
 
 internal sealed record FalloutNifAlphaProperty(
     FalloutNifBlock Block,
