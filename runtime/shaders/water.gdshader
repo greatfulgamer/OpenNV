@@ -107,7 +107,8 @@ void fragment() {
 		// outside it the surface reflects the dark underwater environment.
 		vec3 toward_surface = normalize(world_uv.xyz - CAMERA_POSITION_WORLD);
 		float zenith = clamp(toward_surface.y, 0.0, 1.0);
-		float window = smoothstep(0.62, 0.72, zenith);
+		// A wide transition hides the screen-space edge that can read as tearing.
+		float window = smoothstep(0.48, 0.88, zenith);
 		vec3 sky = mix(sky_color * 1.05, sky_color * 1.30, pow(zenith, 3.0));
 		vec3 under = mix(deep_color * 0.30, sky, window);
 		under *= 0.92 + 0.08 * n1.x;

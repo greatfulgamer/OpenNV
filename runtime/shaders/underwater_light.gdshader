@@ -30,9 +30,10 @@ void fragment() {
 	float a = atan(d.y, d.x);
 	// Angular streaks radiating from the sun, scrolling outward over time.
 	float streak = noise(vec2(a * 14.0, r * 3.0 - TIME * time_scale));
-	streak = smoothstep(0.55, 0.95, streak);
+	streak = mix(streak, noise(vec2(a * 29.0, r * 5.0 - TIME * time_scale * 1.3)), 0.35);
+	streak = smoothstep(0.25, 1.0, streak);
 	// Fade right at the sun and well before the far edges; light dies with depth.
-	float falloff = smoothstep(0.03, 0.16, r) * (1.0 - smoothstep(0.35, 1.05, r));
+	float falloff = smoothstep(0.05, 0.28, r) * (1.0 - smoothstep(0.38, 1.10, r));
 	float depth_fade = mix(0.30, 1.0, smoothstep(1.0, 0.0, uv.y));
 	float rays = streak * falloff * depth_fade * intensity;
 	COLOR = vec4(ray_color * rays, rays);

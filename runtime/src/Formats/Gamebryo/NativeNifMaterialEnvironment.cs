@@ -26,7 +26,7 @@ internal static class NativeNifMaterialEnvironment
         }
         float owned_underwater_caustic(vec3 world) {
             if (opennv_underwater_strength <= 0.0) return 0.0;
-            vec2 q = world.xz * 0.7;
+            vec2 q = world.xz * 0.28;
             float t = TIME * 0.9;
             float result = 0.0;
             for (int layer = 0; layer < 2; ++layer) {
@@ -49,7 +49,7 @@ internal static class NativeNifMaterialEnvironment
                     }
                 }
                 float edge = sqrt(d2) - sqrt(d1);
-                result += 1.0 - smoothstep(0.0, 0.12, edge);
+                result += 1.0 - smoothstep(0.0, 0.38, edge);
             }
             return clamp(result, 0.0, 1.0) * opennv_underwater_strength;
         }

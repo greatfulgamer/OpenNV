@@ -103,7 +103,7 @@ internal partial class RuntimeNativeUnderwater : CanvasLayer
                     var point = camera.UnprojectPosition(world);
                     sunUv = new Vector2(point.X / size.X, point.Y / size.Y);
                     var depthFade = Mathf.Clamp(1.0f - depthMeters * 0.02f, 0.25f, 1.0f);
-                    intensity = Mathf.Clamp(direction.Y, 0.0f, 1.0f) * depthFade * 0.55f;
+                    intensity = Mathf.Clamp(direction.Y, 0.0f, 1.0f) * depthFade * 0.40f;
                 }
             }
         }
