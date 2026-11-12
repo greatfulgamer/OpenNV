@@ -31,6 +31,8 @@ internal partial class RuntimeNativeShaderSky : Node3D
     private Palette _palette = DefaultPalette();
     private float _cirrusCoverage = 0.25f;
     private float _cirrusOpacity = 0.18f;
+    private float _coverageCap = 0.55f;
+    private bool _denseWeather;
     private int _debugFrames;
 
     private static Palette DefaultPalette() => new(
@@ -49,7 +51,13 @@ internal partial class RuntimeNativeShaderSky : Node3D
         _material.SetShaderParameter("star_density", starDensity);
         _material.SetShaderParameter("cloud_octaves", Math.Clamp(cloudOctaves, 1, 5));
         _material.SetShaderParameter("wind_direction", new Vector2(0.85f, 0.28f));
-        var starPng = "/home/bazzite/opennv/runtime/assets/env/night_sky.png";
+        // Equirect star panorama first. The old night_sky.png is a 512x512
+        // tangent tile; mapped as a 360x180 panorama its texels are ~0.7 deg
+        // wide, so every star smears into a multi-pixel blob.
+        var starBase = "/home/bazzite/opennv/runtime/assets/env";
+        var starPng = System.IO.File.Exists($"{starBase}/night_sky_equirect.png")
+            ? $"{starBase}/night_sky_equirect.png"
+            : $"{starBase}/night_sky.png";
         if (System.IO.File.Exists(starPng))
         {
             var starImage = Image.LoadFromFile(starPng);
@@ -128,10 +136,18 @@ internal partial class RuntimeNativeShaderSky : Node3D
         _material.SetShaderParameter("cloud_shadow_color", shadow);
         _material.SetShaderParameter("sun_direction", sun);
         _material.SetShaderParameter("sun_glow", _palette.Glow * (0.05f + 0.95f * day) + dusk * 0.5f);
-        // Midday clouds should read thin and wispy (cirrus/cirrostratus), not
-        // puffy; dawn/dusk and night keep the weather palette's shape.
-        var wispy = Mathf.Clamp(day * (1.0f - dusk), 0.0f, 1.0f);
-        _material.SetShaderParameter("cloud_coverage", Mathf.Lerp(_palette.Coverage, 0.12f, wispy));
+        // Midday clear/cloudy skies read thin and feathery (cirrus), not puffy;
+        // dawn/dusk keeps the sparse authored shape. Rain and storm weather is
+        // the exception: it keeps a dense sheet at every hour and the cap is
+        // lifted so it can actually look like weather.
+        var wispy = _denseWeather ? 0.0f : Mathf.Clamp(day * (1.0f - dusk), 0.0f, 1.0f);
+        var coverage = Mathf.Min(Mathf.Lerp(_palette.Coverage, 0.12f, wispy), _coverageCap);
+        _material.SetShaderParameter("cloud_coverage", coverage);
+        // Extra large-scale domain warp only when the sheet is dense; sparse
+        // feathery clouds keep their exact silhouette, dense sheets lose the
+        // repeating FBM tile.
+        var dense = Mathf.Clamp((coverage - 0.50f) / 0.35f, 0.0f, 1.0f);
+        _material.SetShaderParameter("cloud_warp", 1.0f + 1.6f * dense);
         _material.SetShaderParameter("cloud_brightness", _palette.Brightness * (0.18f + 0.82f * day + 0.45f * dusk));
         _material.SetShaderParameter("cloud_softness", Mathf.Lerp(_palette.Softness, 0.92f, wispy));
         _material.SetShaderParameter("cloud_sharpness", Mathf.Lerp(0.16f, 0.03f, wispy));
@@ -179,6 +195,15 @@ internal partial class RuntimeNativeShaderSky : Node3D
         _material.SetShaderParameter("cirrus_opacity", cirrusOpacity);
         _cirrusCoverage = cirrusCoverage;
         _cirrusOpacity = cirrusOpacity;
-        GD.Print($"OPENNV_NATIVE_SHADER_SKY weather={id} coverage={_palette.Coverage:F2}");
+        // Sparse weather never exceeds the cap, so a clear day cannot saturate
+        // into the tiled FBM pattern. Dense sheets are reserved for weather
+        // that is supposed to be heavy.
+        _denseWeather = key.Contains("rain") || key.Contains("storm");
+        _coverageCap = _denseWeather ? 0.92f
+            : key.Contains("snow") || key.Contains("jacobstown") ? 0.75f
+            : key.Contains("dust") || key.Contains("hazy") || key.Contains("searchlight") ? 0.60f
+            : key.Contains("clear") ? 0.45f
+            : 0.55f;
+        GD.Print($"OPENNV_NATIVE_SHADER_SKY weather={id} coverage={_palette.Coverage:F2} cap={_coverageCap:F2} dense={_denseWeather}");
     }
 }

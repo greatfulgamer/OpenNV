@@ -28,6 +28,8 @@ internal partial class RuntimeNativePlayer : CharacterBody3D
     }
     private float _jumpHeightMeters;
     private FalloutInputControls? _inputControls;
+    private SpotLight3D? _pipBoyLight;
+    internal bool PipBoyLightOn { get; private set; }
 
     internal void ConfigureInputControls(FalloutInputControls controls, Func<int, bool> physicalKeyPressed)
     {
@@ -237,6 +239,22 @@ internal partial class RuntimeNativePlayer : CharacterBody3D
         };
         ConfigureSelfCameraVisibility();
         AddChild(_camera);
+        // Pip-Boy light: a warm, wide, shadow-casting spot riding the camera.
+        // Source default toggle is B; the device light is a world light, not
+        // the Pip-Boy screen effect mesh.
+        _pipBoyLight = new SpotLight3D
+        {
+            Name = "NativePipBoyLight",
+            Position = new Vector3(0.18f, -0.10f, -0.05f),
+            LightColor = new Color(0.80f, 1.0f, 0.76f),
+            LightEnergy = 3.0f,
+            SpotRange = 18.0f,
+            SpotAngle = 46.0f,
+            SpotAngleAttenuation = 1.2f,
+            ShadowEnabled = true,
+            Visible = false,
+        };
+        _camera.AddChild(_pipBoyLight);
         GD.Print($"OPENNV_NATIVE_CAMERA_PROJECTION verticalFov={projection.VerticalFovDegrees:R} " +
             $"nearGameUnits={projection.NearGameUnits:R} source=caller-projection referenceAspect=4:3 " +
             "farClip=unverified matchedFrame=unverified");
@@ -299,6 +317,14 @@ internal partial class RuntimeNativePlayer : CharacterBody3D
             GetViewport().SetInputAsHandled(); return;
         }
         if (PresentationInput(inputEvent)) { GetViewport().SetInputAsHandled(); return; }
+        if (!_modalInput && _furniturePhase == 0 && _pipBoyLight is not null &&
+            inputEvent is InputEventKey { Pressed: true, Echo: false, PhysicalKeycode: Key.B })
+        {
+            PipBoyLightOn = !PipBoyLightOn;
+            _pipBoyLight.Visible = PipBoyLightOn;
+            GD.Print($"OPENNV_PIPBOY_LIGHT on={PipBoyLightOn}");
+            GetViewport().SetInputAsHandled(); return;
+        }
         if (!_modalInput && _furniturePhase == 0 && GetMeta("opennv_source_pipboy_enabled", false).AsBool() &&
             inputEvent is InputEventKey { Pressed: true, Echo: false, PhysicalKeycode: Key.F1 or Key.F2 or Key.F3 } pageKey)
         {

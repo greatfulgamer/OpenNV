@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using Godot;
 using OpenNV.Runtime.Content;
 using OpenNV.Runtime.Gameplay.State;
@@ -22,6 +23,16 @@ internal sealed partial class RuntimeNativeCreature
     private FalloutFollowPackage? _followPackage;
     private FalloutGuardPackage? _guardPackage;
     private FalloutTravelProgress? _guardProgress;
+    private FalloutPatrolRoute? _patrol;
+    private FalloutPatrolProgress? _patrolProgress;
+    private bool _patrolRestored;
+    private (Vector3 Authored, Vector3 Floor)? _patrolDestination;
+    private string? _patrolStatus;
+    private bool _sandbox;
+    private float _sandboxRadiusMeters;
+    private (Vector3 Center, float Radius)? _sandboxArea;
+    private Vector3? _sandboxTarget;
+    private double _sandboxWait;
     private FalloutDialoguePackage? _dialoguePackage;
     private FalloutPackageEvents? _packageEvents;
     private bool _dialogueRequested;
@@ -51,6 +62,8 @@ internal sealed partial class RuntimeNativeCreature
         motion = _aiState?.PackageMotion,
         travel = TravelState,
         guard = _guardPackage is null ? null : new { source = _guardPackage, progress = _guardProgress },
+        patrol = _patrol is null ? null : new { source = _patrol.Package, progress = _patrolProgress, status = _patrolStatus },
+        sandbox = _sandbox ? new { radiusMeters = _sandboxRadiusMeters, target = _sandboxTarget, wait = _sandboxWait } : null,
         eventIdle = _aiState?.PackageIdle,
         packageStarts = _aiState?.PackageStarts,
         packageEvents = _packageEvents is null ? null : new
@@ -126,6 +139,32 @@ internal sealed partial class RuntimeNativeCreature
         Combat?.RestoreSourceBindings();
     }
 
+    private float CreatureDeadCondition(FalloutCondition condition)
+    {
+        // GetDead. Package conditions use the subject by default; Run On 4 is
+        // the subject's linked reference (for example a brahmin checking its
+        // merchant). Non-actor links and absent links are alive by definition.
+        FalloutFormKey subject;
+        if (condition.RunOn == 4)
+        {
+            var linked = FalloutPatrolRoute.Linked(_aiRecords!.GetEffective(Appearance.Reference!.Value));
+            if (linked is not { } reference ||
+                _aiRecords.GetEffective(reference).Signature is not ("NPC_" or "CREA")) return 0;
+            subject = reference;
+        }
+        else
+        {
+            subject = condition.RunOn switch
+            {
+                0 => Appearance.Reference!.Value,
+                2 => condition.Owner.Plugin.AdjustOptionalFormId(condition.Reference)
+                    ?? throw new InvalidDataException("Creature death query has no explicit reference."),
+                _ => throw new NotSupportedException($"Creature death query run-on {condition.RunOn} is unbound."),
+            };
+        }
+        return _aiWorld!.IsDead(subject) ? 1 : 0;
+    }
+
     private Func<FalloutFormKey, FalloutFormKey, double>? _aiItemCount;
 
     internal float PackageCondition(FalloutCondition condition) => condition.Function == 159
@@ -133,6 +172,8 @@ internal sealed partial class RuntimeNativeCreature
             condition, Appearance.Reference!.Value, PackageSitting)
         : condition.Function == 47
         ? OpenNV.Runtime.Gameplay.State.FalloutActorInventoryConditions.ItemCount(condition, Appearance.Reference!.Value, _aiItemCount)
+        : condition.Function == 46
+        ? CreatureDeadCondition(condition)
         : condition.Function is 1 or 14 or 32
         ? ReferenceCondition(condition)
         : condition.RunOn != 0 && condition.Function is not (50 or 84 or 161 or 289)
@@ -199,8 +240,11 @@ internal sealed partial class RuntimeNativeCreature
         var selected = restoreTravel || restoreGuard || restoreAccompany ? _aiRecords!.GetEffective(retained!.Package) :
             FalloutAiPackages.Select(_aiRecords!, Appearance.Creature, PackageCondition, _aiState!.Templates, _aiClock,
                 evaluateRunOn: true,
-                eligible: package => _aiWorld!.PackageEligible(Appearance.Reference!.Value, package, _aiClock,
-                    _aiPackage?.FormKey, _packageEvents?.Done == true));
+                eligible: package => package.FormKey != previousFailure &&
+                    _aiWorld!.PackageEligible(Appearance.Reference!.Value, package, _aiClock,
+                        _aiPackage?.FormKey, _packageEvents?.Done == true) &&
+                    (FalloutPackageData.Read(package).Procedure != 13 ||
+                        FalloutPatrolRoute.HasResolvableStart(_aiRecords!, package, Appearance.Reference!.Value)));
         if (_aiError is not null && selected is not null && previousFailure == selected.FormKey)
         { _failedPackage = previousFailure; return; }
         _aiError = null;
@@ -211,17 +255,23 @@ internal sealed partial class RuntimeNativeCreature
         FalloutDialoguePackage? dialogue = null;
         FalloutTravelPackage? travel = null;
         FalloutGuardPackage? guard = null;
+        FalloutPatrolRoute? patrol = null;
+        var sandbox = false;
         if (source is not null)
         {
-            if (source.Procedure == 1) follow = FalloutFollowPackage.Read(selected!);
+            FalloutFormKey? LinkedReference() =>
+                FalloutPatrolRoute.Linked(_aiRecords!.GetEffective(Appearance.Reference!.Value));
+            if (source.Procedure == 1) follow = FalloutFollowPackage.Read(selected!, LinkedReference);
             else if (source.Procedure == 7)
             {
-                follow = FalloutFollowPackage.ReadAccompany(selected!);
+                follow = FalloutFollowPackage.ReadAccompany(selected!, LinkedReference);
                 if (follow.DefensiveCombat && _aiRecords!.RuntimeFormId(follow.Target) == 0x14)
                     throw new NotSupportedException("Defensive Accompany of the player requires its player-hit assistance owner.");
             }
             else if (source.Procedure == 6) travel = FalloutTravelPackage.Read(selected!);
             else if (source.Procedure == 14) guard = FalloutGuardPackage.Read(selected!);
+            else if (source.Procedure == 13) patrol = FalloutPatrolRoute.Read(_aiRecords!, selected!, Appearance.Reference!.Value);
+            else if (source.Procedure == 12) sandbox = true;
             else if (source.Procedure == 15)
             {
                 dialogue = FalloutDialoguePackage.Read(selected!);
@@ -243,6 +293,23 @@ internal sealed partial class RuntimeNativeCreature
             _aiState!.ProcedureCaptureBlocker = restoreGuard ? null : "Guard approach has no first native motion observation.";
         }
         else { _guardPackage = null; _guardProgress = null; }
+        if (patrol is not null)
+        {
+            _patrol = patrol; _patrolProgress = null; _patrolRestored = false; _patrolDestination = null;
+            GD.Print($"OPENNV_NATIVE_CREATURE_PATROL_READY reference={Appearance.Reference} package={selected!.FormKey} " +
+                $"points={patrol.Points.Count} circular={patrol.Circular} repeat={patrol.Repeatable}");
+        }
+        else { _patrol = null; _patrolProgress = null; _patrolRestored = false; _patrolDestination = null; _patrolStatus = null; }
+        if (sandbox)
+        {
+            var location = selected!.ReadSubrecords().Single(field => field.Signature == "PLDT").Data;
+            var radius = location.Length == 12 ? BinaryPrimitives.ReadInt32LittleEndian(location.Span[8..]) : 0;
+            _sandbox = true; _sandboxRadiusMeters = Math.Max(0, radius) * Skeleton.UnitsToMetres;
+            _sandboxArea = null; _sandboxTarget = null; _sandboxWait = 0;
+            GD.Print($"OPENNV_NATIVE_CREATURE_SANDBOX_READY reference={Appearance.Reference} package={selected.FormKey} " +
+                $"radiusGameUnits={radius} parity=unverified-idles-and-furniture");
+        }
+        else { _sandbox = false; _sandboxArea = null; _sandboxTarget = null; _sandboxWait = 0; }
         _initialPackageSelected = true;
         var restoreFollow = follow is not null && retained?.Package == source!.Form &&
             _aiState!.PackageAssignment is { } followAssignment && followAssignment.Package == source.Form;
@@ -260,6 +327,92 @@ internal sealed partial class RuntimeNativeCreature
         if (restoreTravel) _evaluateRequested = true;
         _failedPackage = null;
         GD.Print($"OPENNV_CREATURE_PACKAGE reference={Appearance.Reference} package={source?.Form} procedure={source?.Procedure}");
+    }
+
+    private void AdvanceSandbox(double delta)
+    {
+        if (Combat is null || _aiError is not null || Combat.OwnsPose ||
+            !Combat.PackageMovementReady || _conversationTarget is not null) return;
+        try
+        {
+            if (_sandboxArea is not { } area)
+            {
+                area = (GlobalPosition, Math.Max(_sandboxRadiusMeters, 2f));
+                _sandboxArea = area;
+            }
+            if (_sandboxWait > 0) { _sandboxWait = Math.Max(0, _sandboxWait - delta); return; }
+            if (_sandboxTarget is not { } target)
+            {
+                // Deterministic per-actor wander inside the source radius; the
+                // sandbox furniture/idle owners are not bound for creatures.
+                var angle = Combat.PackageRandom(3600) / 3600f * Mathf.Tau;
+                var distance = Combat.PackageRandom(1000) / 1000f * area.Radius;
+                var candidate = area.Center + new Vector3(Mathf.Cos(angle) * distance, 0, Mathf.Sin(angle) * distance);
+                _sandboxTarget = Combat.ProjectPackageDestination(candidate);
+                return;
+            }
+            Combat.AdvancePackageMotion(_aiPackage!, target, 0.6f, false, delta, false, requireArrivalHeight: true);
+            if (IsOnFloor() && GlobalPosition.DistanceTo(target) <= 0.7f)
+            {
+                _sandboxTarget = null;
+                _sandboxWait = 2.0 + Combat.PackageRandom(400) / 100.0;
+            }
+        }
+        catch (Exception error) when (error is InvalidDataException or NotSupportedException or InvalidOperationException or IOException or NullReferenceException)
+        {
+            Combat?.StopPackageMotion(); _aiError = error.Message; _failedPackage = _aiPackage?.FormKey;
+            GD.PushError($"OPENNV_NATIVE_CREATURE_SANDBOX_DIVERGENCE reference={Appearance.Reference}: {_aiError}");
+        }
+    }
+
+    private void AdvancePatrol(double delta)
+    {
+        if (_patrol is not { } route || Combat is null || _aiError is not null || Combat.OwnsPose ||
+            !Combat.PackageMovementReady || _conversationTarget is not null) return;
+        try
+        {
+            Vector3 PositionOf(FalloutPatrolPoint point) => GetParent<Node3D>().ToGlobal(
+                new Vector3(point.Position[0], point.Position[2], -point.Position[1]) * Skeleton.UnitsToMetres);
+            if (!_patrolRestored)
+            {
+                _patrolRestored = true;
+                _patrolProgress = Combat.PackageMotion?.Package == route.Package ? Combat.PackageMotion.Patrol : null;
+                if (_patrolProgress is not null) route.Validate(_patrolProgress);
+                else _patrolProgress = route.Start(point => GlobalPosition.DistanceSquaredTo(PositionOf(point)));
+            }
+            var progress = _patrolProgress!;
+            var point = route.Points[progress.Index];
+            var authored = PositionOf(point);
+            if (_patrolDestination is not { } previous || !previous.Authored.IsEqualApprox(authored))
+                _patrolDestination = (authored, Combat.ProjectPackageDestination(authored));
+            var target = _patrolDestination.Value.Floor;
+            var radius = Math.Max(route.Radius * Skeleton.UnitsToMetres, .25f);
+            Combat.AdvancePackageMotion(_aiPackage!, target, radius, route.Running, delta, route.WeaponDrawn, requireArrivalHeight: true);
+            var reached = IsOnFloor() && GlobalPosition.DistanceTo(target) <= radius + .1f;
+            var next = route.Advance(progress, reached, delta);
+            if (next.Index != progress.Index || progress.Arrived && !next.Arrived)
+            {
+                _patrolDestination = null;
+                // Creatures have no source-bound idle owner yet; the route and
+                // wait timer still run, and the missing idle is reported once
+                // per waypoint rather than stalling the package.
+                if (point.Idles is not null || point.ArrivalIdle is not null)
+                    GD.Print($"OPENNV_NATIVE_CREATURE_PATROL_IDLE_UNBOUND reference={Appearance.Reference} marker={point.Reference}");
+            }
+            _patrolProgress = next;
+            Combat.SetPatrolProgress(next);
+            _patrolStatus = next.Complete ? "complete" : next.Arrived ? "waiting" : "travelling";
+            if (next.Complete)
+            {
+                _packageEvents!.Complete();
+                _evaluateRequested = true;
+            }
+        }
+        catch (Exception error) when (error is InvalidDataException or NotSupportedException or InvalidOperationException or IOException or NullReferenceException)
+        {
+            Combat?.StopPackageMotion(); _aiError = error.Message; _failedPackage = _aiPackage?.FormKey;
+            GD.PushError($"OPENNV_NATIVE_CREATURE_PATROL_DIVERGENCE reference={Appearance.Reference}: {_aiError}");
+        }
     }
 
     private Node3D? TargetNode(FalloutFormKey target)
@@ -339,8 +492,10 @@ internal sealed partial class RuntimeNativeCreature
                         });
                 }
             }
+            else if (_patrol is not null) AdvancePatrol(delta);
+            else if (_sandbox) AdvanceSandbox(delta);
         }
-        catch (Exception error) when (error is InvalidDataException or NotSupportedException or InvalidOperationException or FileNotFoundException)
+        catch (Exception error) when (error is InvalidDataException or NotSupportedException or InvalidOperationException or FileNotFoundException or NullReferenceException)
         {
             var changed = _aiError != error.Message;
             _aiError = error.Message;

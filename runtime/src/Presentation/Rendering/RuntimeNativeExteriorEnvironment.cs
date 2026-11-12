@@ -28,7 +28,7 @@ internal partial class RuntimeNativeExteriorEnvironment : Node
     private float _shadowDistance = 100;
     private float _fogScale = 1.0f;
     private float _fogFarOverrideGameUnits;
-    private bool _fogScaleLogged;
+    private float _lastLoggedHour = float.NaN;
     private bool _useSkyShader;
     private bool _suppressSky;
     private string? _skyShaderPath;
@@ -104,8 +104,10 @@ internal partial class RuntimeNativeExteriorEnvironment : Node
         if (_useSkyShader)
         {
             _environment.BackgroundMode = Godot.Environment.BGMode.Sky;
-            _environment.AmbientLightSource = Godot.Environment.AmbientSource.Sky;
-            _environment.AmbientLightSkyContribution = 0.933f;
+            // Color, not Sky: sky radiance at full contribution floods every
+            // surface with a flat wash at night (the "glow"). The authored
+            // weather colour plus the night scale below owns ground lighting.
+            _environment.AmbientLightSource = Godot.Environment.AmbientSource.Color;
             _environment.AmbientLightEnergy = 1.0f;
             _environment.GlowEnabled = true;
             _environment.TonemapMode = Godot.Environment.ToneMapper.Aces;
@@ -233,6 +235,13 @@ internal partial class RuntimeNativeExteriorEnvironment : Node
         var weights = FalloutWeatherTimeWeights.Sample(_sky.Climate, hour, _sky.DaytimeExtension, weather.TimeSamples);
         Color ColorAt(int kind) { var rgb = weather.Sample(weights, kind); return new(rgb[0], rgb[1], rgb[2]); }
         var ambient = ColorAt(3); var fog = ColorAt(1);
+        var night = (weights.First == 3 ? weights.FirstWeight : 0) + (weights.Second == 3 ? weights.SecondWeight : 0);
+        // Night keeps the authored ambient for the sky, but the terrain is
+        // emissive off that same colour and reads as daytime with the lights
+        // dimmed. Scale the ground ambient toward night; the authored dark
+        // fog then carries the distance falloff.
+        var groundScale = Mathf.Lerp(1.0f, 0.40f, Mathf.Clamp(night, 0.0f, 1.0f));
+        var groundAmbient = new Color(ambient.R * groundScale, ambient.G * groundScale, ambient.B * groundScale);
         if (!_useSkyShader && !_suppressSky) _layers.Sample(_records, weather, weights, ImageSpace?.RawTraits[8] ?? 1f);
         var solarAngle = (hour - 6) * MathF.PI / 12;
         var direction = new Vector3(MathF.Cos(solarAngle), MathF.Sin(solarAngle), 0).Normalized();
@@ -241,8 +250,21 @@ internal partial class RuntimeNativeExteriorEnvironment : Node
         _sun.LightEnergy = _useSkyShader
             ? Mathf.Clamp((direction.Y + 0.09f) / 0.09f, 0.0f, 1.0f)
             : direction.Y > 0 ? ImageSpace?.RawTraits[11] ?? 1 : 0;
-        _environment.AmbientLightColor = ambient;
+        // Below the horizon, mirror the set sun as a faint cool moon. Without
+        // it the night land is a flat ambient wash with no directional
+        // shading; the moon gives slopes a sweeping light-to-dark gradient.
+        var nightGlow = Mathf.Clamp(night, 0.0f, 1.0f);
+        if (direction.Y <= 0 && nightGlow > 0)
+        {
+            var moon = new Vector3(-direction.X, -direction.Y, -direction.Z).Normalized();
+            _sun.Basis = RetailLighting.DirectionalLightBasis(moon);
+            _sun.LightColor = new Color(0.42f, 0.50f, 0.72f);
+            _sun.LightEnergy = 0.12f * nightGlow;
+        }
+        _environment.AmbientLightColor = groundAmbient;
         _environment.FogLightColor = fog;
+        NativeNifMaterialEnvironment.PublishGrassLight(
+            Mathf.Lerp(1.0f, 0.22f, Mathf.Clamp(night, 0.0f, 1.0f)));
         var declaration = _records.GetEffective(weather.Form).ReadSubrecords().Single(field => field.Signature == "FNAM").Data;
         if (declaration.Length != 24) throw new InvalidDataException("Exterior weather fog declaration requires six floats.");
         var values = new float[6];
@@ -251,7 +273,6 @@ internal partial class RuntimeNativeExteriorEnvironment : Node
             values[index] = BinaryPrimitives.ReadSingleLittleEndian(declaration.Span[(index * 4)..]);
             if (!float.IsFinite(values[index])) throw new InvalidDataException("Weather fog is non-finite.");
         }
-        var night = (weights.First == 3 ? weights.FirstWeight : 0) + (weights.Second == 3 ? weights.SecondWeight : 0);
         var near = Mathf.Lerp(values[0], values[2], night);
         var far = Mathf.Lerp(values[1], values[3], night);
         var power = Mathf.Lerp(values[4], values[5], night);
@@ -260,13 +281,21 @@ internal partial class RuntimeNativeExteriorEnvironment : Node
         // fog end just inside the LOD edge (the visible range tracks the
         // loaded world for every weather); --fog-scale is a fixed multiplier.
         var ratio = _fogFarOverrideGameUnits > 0 ? _fogFarOverrideGameUnits / far : _fogScale;
-        if (!_fogScaleLogged)
+        var nightFog = Mathf.Lerp(1.0f, 0.55f, Mathf.Clamp(night, 0.0f, 1.0f));
+        if (float.IsNaN(_lastLoggedHour) || Mathf.Abs(hour - _lastLoggedHour) >= 0.25f)
         {
-            _fogScaleLogged = true;
+            _lastLoggedHour = hour;
             GD.Print($"OPENNV_EXTERIOR_FOG nearGameUnits={near:F0} farGameUnits={far:F0} power={power:F3} " +
-                $"ratio={ratio:F2} farMeters={far * _units * ratio:F0}");
+                $"ratio={ratio:F2} nightFog={nightFog:F2} farMeters={far * ratio * nightFog * _units:F0} hour={hour:F2} " +
+                $"ambient=({ambient.R:F3},{ambient.G:F3},{ambient.B:F3}) ground=({groundAmbient.R:F3},{groundAmbient.G:F3},{groundAmbient.B:F3}) " +
+                $"fog=({fog.R:F3},{fog.G:F3},{fog.B:F3}) sun={_sun.LightEnergy:F3}");
         }
         near *= ratio; far *= ratio;
+        // Night distance gradient: the authored/LOD fog end is horizon-scale
+        // (~3.4 km), which keeps the whole valley visible at 23:00. Pull the
+        // interval in at night so the land sweeps to the near-black fog colour
+        // instead of ending in a fully-lit diorama.
+        near *= nightFog; far *= nightFog;
         if (far <= near || power <= 0) throw new InvalidDataException("Weather fog interval is invalid.");
         _environment.FogDepthBegin = Math.Max(0, near * _units);
         _environment.FogDepthEnd = far * _units;
@@ -279,7 +308,7 @@ internal partial class RuntimeNativeExteriorEnvironment : Node
             _environment.FogDepthEnd = Mathf.Clamp(22.0f - depthMeters * 0.25f, 5.0f, 22.0f);
             _environment.FogDepthCurve = 1.4f;
         }
-        var nextAmbient = new Vector3(ambient.R, ambient.G, ambient.B);
+        var nextAmbient = new Vector3(groundAmbient.R, groundAmbient.G, groundAmbient.B);
         var nextFog = new Vector3(fog.R, fog.G, fog.B);
         var nextRange = new Vector3(near, far, power);
         if (!_lightingBound || _ambient != nextAmbient || _fog != nextFog || _range != nextRange)

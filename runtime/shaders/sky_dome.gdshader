@@ -14,6 +14,7 @@ uniform float cloud_scale : hint_range(0.1, 20.0) = 7.0;
 uniform float cloud_brightness : hint_range(0.3, 2.0) = 0.95;
 uniform float cloud_sharpness : hint_range(0.02, 0.5) = 0.16;
 uniform float cloud_softness : hint_range(0.0, 1.0) = 0.35;
+uniform float cloud_warp : hint_range(0.0, 3.0) = 1.0;
 uniform float sun_glow : hint_range(0.0, 2.0) = 0.6;
 uniform float horizon_glow : hint_range(0.0, 2.0) = 0.45;
 uniform float haze_strength : hint_range(0.0, 1.0) = 0.35;
@@ -24,7 +25,7 @@ uniform float cirrus_coverage : hint_range(0.0, 1.0) = 0.34;
 uniform float cirrus_opacity : hint_range(0.0, 1.0) = 0.38;
 uniform float cirrus_scale : hint_range(0.1, 40.0) = 13.0;
 uniform float cirrus_speed_mult : hint_range(1.0, 5.0) = 1.8;
-uniform sampler2D star_field : repeat_enable;
+uniform sampler2D star_field : filter_linear, repeat_enable;
 uniform bool use_star_field = false;
 uniform int cloud_octaves : hint_range(1, 5) = 5;
 uniform float star_density : hint_range(0.0, 2.0) = 1.0;
@@ -79,10 +80,13 @@ float star_points(vec3 dir) {
     if (rnd.x < 0.975) return 0.0;
     vec3 offset = (hash3(cell + 7.0) - 0.5) * 0.55;
     float d = length(f - offset);
-    float size = 0.22 + 0.30 * rnd.y;
+    // Tiny cores with a short falloff: a soft radius this small still reads
+    // as a point on screen, where the old 0.22-0.52 cell discs became
+    // multi-pixel fuzzy spots.
+    float size = 0.10 + 0.18 * rnd.y;
     float mag = 0.35 + 0.85 * rnd.z;
     float twinkle = 0.55 + 0.45 * sin(TIME * (0.4 + 2.2 * rnd.y) + rnd.z * 6.2831);
-    return smoothstep(size, 0.0, d) * mag * twinkle;
+    return smoothstep(size, size * 0.35, d) * mag * twinkle;
 }
 
 float cloud_density(vec2 uv, float coverage, float sharpness, float softness, float warp_amount, float detail) {
@@ -140,7 +144,7 @@ void fragment() {
 
         vec2 uv1 = base_uv * cloud_scale + wind * TIME * cloud_speed * 0.6;
         float cloud_detail = smoothstep(0.02, 0.35, ed);
-        float cumulus = cloud_density(uv1, cloud_coverage, cloud_sharpness, cloud_softness, 1.0, cloud_detail);
+        float cumulus = cloud_density(uv1, cloud_coverage, cloud_sharpness, cloud_softness, cloud_warp, cloud_detail);
 
         vec2 uv2 = OCT * (base_uv * cirrus_scale) + wind * TIME * cloud_speed * cirrus_speed_mult * 0.6;
         float cirrus = cloud_density(uv2, cirrus_coverage, 0.10, 0.60, 0.6, cloud_detail) * cirrus_opacity;

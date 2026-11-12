@@ -9,10 +9,12 @@ internal sealed record FalloutFollowPackage(FalloutFormKey Form, FalloutFormKey 
     internal bool Running => (Flags & 0x2000) != 0;
     internal bool AllowsUnprovokedCombat(FalloutFormKey? attackedTarget) =>
         !Accompany || !DefensiveCombat || attackedTarget == Target;
-    internal static FalloutFollowPackage Read(FalloutPluginRecord record) => Read(record, false);
-    internal static FalloutFollowPackage ReadAccompany(FalloutPluginRecord record) => Read(record, true);
+    internal static FalloutFollowPackage Read(FalloutPluginRecord record, Func<FalloutFormKey?>? linked = null) =>
+        Read(record, false, linked);
+    internal static FalloutFollowPackage ReadAccompany(FalloutPluginRecord record, Func<FalloutFormKey?>? linked = null) =>
+        Read(record, true, linked);
 
-    private static FalloutFollowPackage Read(FalloutPluginRecord record, bool accompany)
+    private static FalloutFollowPackage Read(FalloutPluginRecord record, bool accompany, Func<FalloutFormKey?>? linked)
     {
         if (record.Signature != "PACK") throw new InvalidDataException("Follow source is not PACK.");
         var fields = record.ReadSubrecords().ToArray();
@@ -40,9 +42,16 @@ internal sealed record FalloutFollowPackage(FalloutFormKey Form, FalloutFormKey 
         if (fields.Any(field => field.Signature is "PLDT" or "PLD2"))
             throw new NotSupportedException("Follow start/end locations require their travel/completion owner.");
         var target = Required("PTDT", 16).Span;
-        if (BinaryPrimitives.ReadInt32LittleEndian(target) != 0)
-            throw new NotSupportedException("Follow target requires its non-reference selection owner.");
-        var key = record.Plugin.AdjustFormId(BinaryPrimitives.ReadUInt32LittleEndian(target[4..]));
+        // Target type 0 is a specific reference; type 3 is the actor's linked
+        // reference (for example a brahmin following its merchant).
+        var targetType = BinaryPrimitives.ReadInt32LittleEndian(target);
+        var key = targetType switch
+        {
+            0 => record.Plugin.AdjustFormId(BinaryPrimitives.ReadUInt32LittleEndian(target[4..])),
+            3 => (linked ?? throw new NotSupportedException("Follow target requires its linked-reference owner.")).Invoke()
+                ?? throw new NotSupportedException("Follow linked target is absent for this actor."),
+            _ => throw new NotSupportedException($"Follow target type {targetType} requires its selection owner."),
+        };
         var distance = BinaryPrimitives.ReadInt32LittleEndian(target[8..]);
         if (distance <= 0) throw new InvalidDataException("Follow distance must be positive.");
         return new(record.FormKey, key, distance, data.Flags, accompany);

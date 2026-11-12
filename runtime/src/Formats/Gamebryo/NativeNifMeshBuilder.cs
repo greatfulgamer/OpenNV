@@ -1856,11 +1856,17 @@ internal static partial class RuntimeNativeNifMeshBuilder
                 AlphaScissorThreshold = alpha is null ? 0.5f : alpha.Threshold / 255f,
                 CullMode = BaseMaterial3D.CullModeEnum.Disabled,
                 VertexColorUseAsAlbedo = false,
+                // Tall-grass cards are vertical billboards; their normals face
+                // across the field, so the noon sun contributes almost nothing
+                // and the clumps crush to black under ACES. Retail grass is
+                // effectively unlit; shade it from its own texture instead.
+                ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
                 Roughness = 1.0f,
                 Metallic = 0.0f,
                 SpecularMode = BaseMaterial3D.SpecularModeEnum.Disabled,
             };
             material.ResourceName = "Owned Tall Grass";
+            NativeNifMaterialEnvironment.RegisterGrass(material);
             return material;
         }
 

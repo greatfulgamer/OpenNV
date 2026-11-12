@@ -18,9 +18,12 @@ internal sealed record FalloutPatrolRoute(FalloutFormKey Package, string SourceS
         var data = FalloutPackageData.Read(package);
         if (data.Procedure != 13) throw new InvalidDataException("Package procedure is not Patrol.");
         var flags = data.Flags;
-        const uint supported = 0x00800000 | 0x00002000 | 0x01000000;
+        // 0x00200000 appears on the engine's DefaultPatrolCasual package (with
+        // Walk speed and no weapon); it does not change the linked-point route,
+        // wait, run or weapon flags read below.
+        const uint supported = 0x00800000 | 0x00002000 | 0x01000000 | 0x00200000;
         if ((flags & ~supported) != 0 || fields.Any(field => field.Signature is "PLD2" or "PTDT" or "PTD2"))
-            throw new NotSupportedException("Patrol package flags or alternate targets need their procedure owner.");
+            throw new NotSupportedException($"Patrol package flags 0x{flags & ~supported:X8} or alternate targets need their procedure owner.");
         var location = Required(fields, "PLDT", 12).Span;
         var repeat = Required(fields, "PKPT", 2).Span[0];
         if (repeat > 1) throw new InvalidDataException("Patrol repeat flag is invalid.");
@@ -67,6 +70,22 @@ internal sealed record FalloutPatrolRoute(FalloutFormKey Package, string SourceS
         if (next is not null && next != first) throw new NotSupportedException("Patrol chain enters a cycle after its starting point.");
         return new(package.FormKey, Convert.ToHexString(hash.GetHashAndReset()), points, next == first,
             repeat == 1, radius, (flags & 0x2000) != 0, (flags & 0x800000) != 0);
+    }
+
+    // A generic patrol package (for example DefaultPatrolCasual) can be
+    // authored on creatures that carry no linked start reference. The engine
+    // never runs such a package; treat it as inapplicable instead of raising a
+    // per-actor divergence during package selection.
+    internal static bool HasResolvableStart(FalloutPluginStack records, FalloutPluginRecord package, FalloutFormKey actor)
+    {
+        var location = package.ReadSubrecords().SingleOrDefault(field => field.Signature == "PLDT").Data;
+        if (location.Length != 12) return true;
+        return BinaryPrimitives.ReadInt32LittleEndian(location.Span) switch
+        {
+            0 => true,
+            6 => Linked(records.GetEffective(actor)) is not null,
+            _ => true,
+        };
     }
 
     internal static FalloutFormKey? Linked(FalloutPluginRecord record)
