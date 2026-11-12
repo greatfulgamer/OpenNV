@@ -449,6 +449,32 @@ public partial class RuntimeCoordinator
         _ => "high",
     };
 
+    // Weather fog ends well inside the loaded LOD radius (stock fog far is
+    // ~1.5x shorter than fBlockLoadDistance), so extending LOD alone shows
+    // nothing. --fog-scale pushes the authored fog ramp out proportionally;
+    // scale 1 keeps exact retail values.
+    private float FogScale()
+    {
+        if (!_options.TryGetValue("fog-scale", out var value)) return 1.0f;
+        if (!float.TryParse(value, System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var scale))
+            throw new ArgumentException("--fog-scale requires a number.");
+        return Mathf.Clamp(scale, 0.25f, 8.0f);
+    }
+
+    // --fog-follow-lod end the fog just inside the loaded distant terrain so
+    // the visible range tracks fBlockLoadDistance instead of the authored
+    // weather fog, and the LOD edge stays hidden.
+    private float FogFarOverrideGameUnits()
+    {
+        if (!_options.ContainsKey("fog-follow-lod")) return 0.0f;
+        var loadDistance = FalloutInstallationSettings.Read(RuntimeLiveContentSource.Current!)
+            .Number("TerrainManager", "fBlockLoadDistance");
+        if (!float.IsFinite(loadDistance) || loadDistance <= 0)
+            throw new InvalidDataException("--fog-follow-lod requires a positive fBlockLoadDistance.");
+        return loadDistance * 0.95f;
+    }
+
     private static IReadOnlyList<(Vector2 Center, float Radius)> GrassSuppression(
         FalloutCellScene scene, (int X, int Y)? coordinates)
     {
@@ -685,7 +711,7 @@ public partial class RuntimeCoordinator
         // Cover the complete resident square, including its diagonal when the
         // player crosses an anchor boundary. Engine defaults cut this at 100m.
         var shadowDistance = (diameter / 2 + 1) * 4096 * _configuration.World.GameUnitsToMeters * MathF.Sqrt(2);
-        sky.Configure(_nativePluginStack!, _nativeSkyLighting!, () => _nativeGameTime!.Hour, _configuration.World.GameUnitsToMeters, this, shadowDistance, _options.ContainsKey("sky-shader") || _options.ContainsKey("sky-simple"), _options.ContainsKey("sky-simple") ? "res://shaders/sky_simple.gdshader" : "res://shaders/sky_sorta.gdshader", _options.ContainsKey("sky-dome"), EnvironmentTier() != "low");
+        sky.Configure(_nativePluginStack!, _nativeSkyLighting!, () => _nativeGameTime!.Hour, _configuration.World.GameUnitsToMeters, this, shadowDistance, _options.ContainsKey("sky-shader") || _options.ContainsKey("sky-simple"), _options.ContainsKey("sky-simple") ? "res://shaders/sky_simple.gdshader" : "res://shaders/sky_sorta.gdshader", _options.ContainsKey("sky-dome"), EnvironmentTier() != "low", FogScale(), FogFarOverrideGameUnits());
         root.AddChild(sky);
         if (_options.ContainsKey("sky-dome"))
         {

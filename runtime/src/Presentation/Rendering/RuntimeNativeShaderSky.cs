@@ -25,6 +25,8 @@ internal partial class RuntimeNativeShaderSky : Node3D
     private Func<string>? _weather;
     private Func<Vector3>? _sun;
     private ShaderMaterial? _material;
+    private MeshInstance3D? _sphere;
+    private float _sphereRadius;
     private string _lastWeather = "";
     private Palette _palette = DefaultPalette();
     private float _cirrusCoverage = 0.25f;
@@ -58,7 +60,7 @@ internal partial class RuntimeNativeShaderSky : Node3D
                 GD.Print($"OPENNV_NATIVE_STAR_FIELD source={starPng} size={starImage.GetWidth()}x{starImage.GetHeight()}");
             }
         }
-        var sphere = new MeshInstance3D
+        _sphere = new MeshInstance3D
         {
             Name = "ShaderSkySphere",
             Mesh = new SphereMesh
@@ -72,13 +74,30 @@ internal partial class RuntimeNativeShaderSky : Node3D
             CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
             MaterialOverride = _material,
         };
-        AddChild(sphere);
+        _sphereRadius = 190.0f;
+        AddChild(_sphere);
         ApplyWeather("");
     }
 
     public override void _Process(double delta)
     {
         if (_anchor is not null) GlobalPosition = _anchor.Invoke();
+        if (_sphere is not null)
+        {
+            // A finite dome inside the camera's near field paints over any
+            // geometry farther away (the old 190 m radius clipped the world to
+            // the foreground). Park the shell just inside the far plane so it
+            // can never be nearer than visible terrain; the shader is
+            // direction-driven, so the visual result is unchanged.
+            var camera = GetViewport()?.GetCamera3D();
+            var radius = camera is not null ? Mathf.Max(1.0f, camera.Far * 0.95f) : 190.0f;
+            if (Mathf.Abs(radius - _sphereRadius) > 1.0f)
+            {
+                _sphereRadius = radius;
+                _sphere.Scale = new Vector3(radius, radius, radius);
+                GD.Print($"OPENNV_SKY_DOME_RADIUS radius={radius:F0} cameraFar={camera?.Far:F0}");
+            }
+        }
         if (_material is null) return;
         if (_weather is not null)
         {

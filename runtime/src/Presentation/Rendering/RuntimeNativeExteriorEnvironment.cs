@@ -26,6 +26,9 @@ internal partial class RuntimeNativeExteriorEnvironment : Node
     private float _underwaterDepth;
     private bool _underwaterCaustics = true;
     private float _shadowDistance = 100;
+    private float _fogScale = 1.0f;
+    private float _fogFarOverrideGameUnits;
+    private bool _fogScaleLogged;
     private bool _useSkyShader;
     private bool _suppressSky;
     private string? _skyShaderPath;
@@ -46,7 +49,8 @@ internal partial class RuntimeNativeExteriorEnvironment : Node
 
     internal void Configure(FalloutPluginStack records, FalloutSkyLightingState sky, Func<float> hour, float units,
         Node? sceneRoot = null, float shadowDistance = 100, bool useSkyShader = false, string? skyShaderPath = null,
-        bool suppressSky = false, bool underwaterCaustics = true)
+        bool suppressSky = false, bool underwaterCaustics = true, float fogScale = 1.0f,
+        float fogFarOverrideGameUnits = 0.0f)
     {
         _useSkyShader = useSkyShader;
         _skyShaderPath = skyShaderPath;
@@ -54,6 +58,12 @@ internal partial class RuntimeNativeExteriorEnvironment : Node
         _underwaterCaustics = underwaterCaustics;
         if (!float.IsFinite(shadowDistance) || shadowDistance <= 0)
             throw new InvalidDataException("Exterior shadow distance must cover a positive finite region.");
+        if (!float.IsFinite(fogScale) || fogScale <= 0)
+            throw new InvalidDataException("Exterior fog scale must be positive and finite.");
+        if (!float.IsFinite(fogFarOverrideGameUnits) || fogFarOverrideGameUnits < 0)
+            throw new InvalidDataException("Exterior fog far override must be non-negative and finite.");
+        _fogScale = fogScale;
+        _fogFarOverrideGameUnits = fogFarOverrideGameUnits;
         _records = records; _sky = sky; _hour = hour; _units = units; _sceneRoot = sceneRoot; _shadowDistance = shadowDistance;
     }
 
@@ -245,6 +255,18 @@ internal partial class RuntimeNativeExteriorEnvironment : Node
         var near = Mathf.Lerp(values[0], values[2], night);
         var far = Mathf.Lerp(values[1], values[3], night);
         var power = Mathf.Lerp(values[4], values[5], night);
+        // Authored fog far is much shorter than the loaded LOD radius, so a
+        // clear-day valley reads as a white wall. --fog-follow-lod parks the
+        // fog end just inside the LOD edge (the visible range tracks the
+        // loaded world for every weather); --fog-scale is a fixed multiplier.
+        var ratio = _fogFarOverrideGameUnits > 0 ? _fogFarOverrideGameUnits / far : _fogScale;
+        if (!_fogScaleLogged)
+        {
+            _fogScaleLogged = true;
+            GD.Print($"OPENNV_EXTERIOR_FOG nearGameUnits={near:F0} farGameUnits={far:F0} power={power:F3} " +
+                $"ratio={ratio:F2} farMeters={far * _units * ratio:F0}");
+        }
+        near *= ratio; far *= ratio;
         if (far <= near || power <= 0) throw new InvalidDataException("Weather fog interval is invalid.");
         _environment.FogDepthBegin = Math.Max(0, near * _units);
         _environment.FogDepthEnd = far * _units;
