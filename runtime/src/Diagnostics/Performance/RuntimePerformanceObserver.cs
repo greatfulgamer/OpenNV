@@ -22,14 +22,20 @@ internal partial class RuntimePerformanceObserver : Node
     private PerformanceMetricAccumulator _staticMemoryBytes;
     private PerformanceMetricAccumulator _renderedObjectCount;
     private PerformanceMetricAccumulator _renderedPrimitiveCount;
+    private bool _orphanProbe;
+    private long _lastOrphanCount = -1;
+    private int _orphanStableSamples;
+    private bool _orphanDumped;
 
     internal void Configure(
         RuntimePerformanceConfiguration configuration,
         string configurationSchema,
         string configurationSha256,
-        string? reportPath)
+        string? reportPath,
+        bool orphanProbe = false)
     {
         _configuration = configuration;
+        _orphanProbe = orphanProbe;
         _configurationSchema = configurationSchema;
         _configurationSha256 = configurationSha256;
         _reportPath = reportPath;
@@ -70,6 +76,21 @@ internal partial class RuntimePerformanceObserver : Node
             Godot.Performance.GetMonitor(Godot.Performance.Monitor.RenderTotalObjectsInFrame));
         _renderedPrimitiveCount.Add(
             Godot.Performance.GetMonitor(Godot.Performance.Monitor.RenderTotalPrimitivesInFrame));
+        if (_orphanProbe)
+        {
+            var orphans = (long)Godot.Performance.GetMonitor(Godot.Performance.Monitor.ObjectOrphanNodeCount);
+            var delta = orphans - Math.Max(0, _lastOrphanCount);
+            if (_lastOrphanCount < 0 || delta != 0 || _sampleCount % 5 == 0)
+                GD.Print($"OPENNV_ORPHAN_PROBE samples={_sampleCount} count={orphans} delta={delta} stable={_orphanStableSamples}");
+            _lastOrphanCount = orphans;
+            _orphanStableSamples = delta == 0 ? _orphanStableSamples + 1 : 0;
+            if (_orphanStableSamples == 30 && !_orphanDumped)
+            {
+                _orphanDumped = true;
+                GD.Print($"OPENNV_ORPHAN_PROBE_DUMP count={orphans} stableSamples={_orphanStableSamples}");
+                Node.PrintOrphanNodes();
+            }
+        }
         _sampleCount++;
     }
 

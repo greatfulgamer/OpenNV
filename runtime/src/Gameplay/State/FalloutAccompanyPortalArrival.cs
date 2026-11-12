@@ -20,7 +20,8 @@ internal sealed record FalloutAccompanyPortalArrival(FalloutFormKey SourceDoor, 
         Validate();
         if (records.GetEffective(world.Get(actor).Base).Signature != "CREA")
             throw new InvalidDataException("Accompany portal receipt has no creature continuation owner.");
-        _ = FalloutFollowPackage.ReadAccompany(package);
+        _ = FalloutFollowPackage.ReadAccompany(package,
+            () => FalloutPatrolRoute.Linked(records.GetEffective(actor)));
         if (world.Get(actor).PackageAssignment is not { Done: false } assignment || assignment.Package != package.FormKey)
             throw new InvalidDataException("Accompany portal receipt has no matching unfinished package assignment.");
         world.ValidateCommittedPortalPlacement(actor, SourceDoor, DestinationDoor);

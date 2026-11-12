@@ -145,7 +145,8 @@ public partial class RuntimeCoordinator : Node3D
                 _configuration.Performance,
                 RuntimeConfiguration.ExpectedSchema,
                 _configuration.Sha256,
-                performanceReportPath);
+                performanceReportPath,
+                _options.ContainsKey("orphan-probe"));
             AddChild(performanceObserver);
             if (launch.LoadingTitle is not null)
                 _loadingScreen?.SetTitle(launch.LoadingTitle);

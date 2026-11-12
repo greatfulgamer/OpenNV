@@ -99,7 +99,10 @@ internal sealed partial class RuntimeNativeCreature : INativeActorPortal
             throw new NotSupportedException("Creature package no longer owns its pending door continuation.");
         var package = _aiRecords!.GetEffective(_aiPackage!.FormKey);
         var travel = _travelPackage is null ? null : FalloutTravelPackage.Read(package);
-        var source = travel is null ? FalloutFollowPackage.ReadAccompany(package) : null;
+        var source = travel is null
+            ? FalloutFollowPackage.ReadAccompany(package,
+                () => FalloutPatrolRoute.Linked(_aiRecords!.GetEffective(actor)))
+            : null;
         var targetCell = travel is not null ? travel.Start(_aiRecords, world, actor).Cell :
             _aiRecords.RuntimeFormId(source!.Target) == 0x14
             ? Combat!.PackagePlayerCell ?? throw new NotSupportedException("Accompany player has no current CELL owner.")
