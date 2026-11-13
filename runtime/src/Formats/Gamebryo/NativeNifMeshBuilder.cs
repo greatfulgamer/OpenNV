@@ -1849,22 +1849,15 @@ internal static partial class RuntimeNativeNifMeshBuilder
             Texture2D? texture = null;
             try { texture = NativeOwnedMediaLoader.LoadTexture(tall.FileName); }
             catch (Exception) { }
-            var material = new StandardMaterial3D
+            // Unshaded on purpose (vertical billboard normals made the noon sun
+            // light nothing), with a small per-world-position wind bend and the
+            // exterior grass-light factor passed as a global uniform.
+            var material = new ShaderMaterial
             {
-                AlbedoTexture = texture,
-                Transparency = BaseMaterial3D.TransparencyEnum.AlphaScissor,
-                AlphaScissorThreshold = alpha is null ? 0.5f : alpha.Threshold / 255f,
-                CullMode = BaseMaterial3D.CullModeEnum.Disabled,
-                VertexColorUseAsAlbedo = false,
-                // Tall-grass cards are vertical billboards; their normals face
-                // across the field, so the noon sun contributes almost nothing
-                // and the clumps crush to black under ACES. Retail grass is
-                // effectively unlit; shade it from its own texture instead.
-                ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
-                Roughness = 1.0f,
-                Metallic = 0.0f,
-                SpecularMode = BaseMaterial3D.SpecularModeEnum.Disabled,
+                Shader = GD.Load<Shader>("res://shaders/tall_grass.gdshader"),
             };
+            if (texture is not null) material.SetShaderParameter("albedo_map", texture);
+            material.SetShaderParameter("alpha_scissor", alpha is null ? 0.5f : alpha.Threshold / 255f);
             material.ResourceName = "Owned Tall Grass";
             NativeNifMaterialEnvironment.RegisterGrass(material);
             return material;

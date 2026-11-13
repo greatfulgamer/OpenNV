@@ -295,7 +295,7 @@ internal static class RuntimeNativeLandscapeTransportBuilder
             }
             if (choices.Count == 0) continue;
             var requested = choices.Sum(choice =>
-                Mathf.Clamp((int)(choice.Grass.Density * 4.0f * densityScale), 12, 250));
+                Mathf.Clamp((int)(choice.Grass.Density * 3.0f * densityScale), 12, 250));
             requested = Mathf.Clamp(requested, 12, 600);
             var offsetX = (quadrant % QuadrantSide) * QuadrantLastVertex;
             var offsetY = (quadrant / QuadrantSide) * QuadrantLastVertex;
@@ -355,6 +355,9 @@ internal static class RuntimeNativeLandscapeTransportBuilder
                 var slope = Mathf.RadToDeg(Mathf.Acos(Mathf.Clamp(normal.Y, -1.0f, 1.0f)));
                 if (slope < pick.MinSlope || slope > pick.MaxSlope) continue;
                 var scale = Mathf.Max(0.1f, 1.0f + ((float)random.NextDouble() * 2.0f - 1.0f) * pick.HeightRange);
+                // Source HeightRange is often zero; keep an independent size
+                // spread so clumps do not all read as the same stamp.
+                scale *= 0.55f + (float)random.NextDouble() * 1.05f;
                 var yaw = (float)random.NextDouble() * Mathf.Tau;
                 var position = new Vector3(
                     (cellX + gridX * FalloutLandscapeTransportResolver.VertexSpacingGameUnits) * units,

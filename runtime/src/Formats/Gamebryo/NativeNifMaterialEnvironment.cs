@@ -82,21 +82,21 @@ internal static class NativeNifMaterialEnvironment
         if (lit || effect) mesh.SetInstanceShaderParameter(ExteriorParameter, true);
     }
 
-    private static readonly List<WeakReference<StandardMaterial3D>> GrassMaterials = [];
+    private static readonly List<WeakReference<ShaderMaterial>> GrassMaterials = [];
     private static float _grassLight = 1.0f;
 
-    // Tall grass is unshaded (vertical billboards); standard materials cannot
-    // read the exterior global, so modulate their albedo from the day/night
-    // sample instead of letting the grass stay daylight-bright at 23:00.
-    internal static void RegisterGrass(StandardMaterial3D material)
+    // Tall grass is unshaded and has its own shader; carry the day/night
+    // factor on the material because global uniforms are not reliably present
+    // before the first shader compiles.
+    internal static void RegisterGrass(ShaderMaterial material)
     {
-        GrassMaterials.Add(new WeakReference<StandardMaterial3D>(material));
-        ApplyGrassLight(material);
+        GrassMaterials.Add(new WeakReference<ShaderMaterial>(material));
+        material.SetShaderParameter("grass_light", _grassLight);
     }
 
     internal static void PublishGrassLight(float light)
     {
-        _grassLight = Math.Clamp(light, 0.0f, 1.0f);
+        _grassLight = Mathf.Clamp(light, 0.0f, 1.0f);
         for (var index = GrassMaterials.Count - 1; index >= 0; index--)
         {
             if (!GrassMaterials[index].TryGetTarget(out var material) || !GodotObject.IsInstanceValid(material))
@@ -104,13 +104,8 @@ internal static class NativeNifMaterialEnvironment
                 GrassMaterials.RemoveAt(index);
                 continue;
             }
-            ApplyGrassLight(material);
+            material.SetShaderParameter("grass_light", _grassLight);
         }
-    }
-
-    private static void ApplyGrassLight(StandardMaterial3D material)
-    {
-        material.AlbedoColor = new Color(_grassLight, _grassLight, _grassLight);
     }
 
     internal static void PublishExterior(Vector3 ambient, Vector3 fog, Vector3 range, float unitsToMeters)
