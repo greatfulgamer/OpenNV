@@ -442,6 +442,9 @@ public partial class RuntimeCoordinator
     private ShaderMaterial? _nativeWaterMaterial;
 
     // Tier ladder for weaker fleet GPUs. Defaults to the current full-quality pass.
+    private bool NightCloudDeck() => !_options.TryGetValue("night-cloud-deck", out var value) ||
+        !string.Equals(value, "false", StringComparison.OrdinalIgnoreCase);
+
     private string EnvironmentTier() => _options.GetValueOrDefault("env-tier", "high").ToLowerInvariant() switch
     {
         "low" => "low",
@@ -726,7 +729,10 @@ public partial class RuntimeCoordinator
                     return new Vector3(MathF.Cos(angle), MathF.Sin(angle), 0);
                 },
                 tier == "low" ? 3 : tier == "medium" ? 4 : 5,
-                tier == "low" ? 1.0f : tier == "medium" ? 1.25f : 1.5f);
+                tier == "low" ? 1.0f : tier == "medium" ? 1.25f : 1.5f,
+                NightCloudDeck(),
+                _options.ContainsKey("freeze-clouds") ? 0.0f : -1.0f,
+                _options.ContainsKey("cloud-debug-alpha"));
             GD.Print($"OPENNV_ENV_TIER tier={tier}");
             root.AddChild(dome);
         }

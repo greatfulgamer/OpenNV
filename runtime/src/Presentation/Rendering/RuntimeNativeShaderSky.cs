@@ -27,6 +27,14 @@ internal partial class RuntimeNativeShaderSky : Node3D
     private ShaderMaterial? _material;
     private MeshInstance3D? _sphere;
     private float _sphereRadius;
+    private bool _enableCloudDeck;
+    private MeshInstance3D? _cloudDeck;
+    private ShaderMaterial? _cloudDeckMaterial;
+    private float _cloudDeckRadius;
+    private Vector2 _cloudSeed;
+    private float _cloudTimeOverride = -1.0f;
+    private bool _cloudStateLogged;
+    private const ulong CloudDeckSeed = 0x9E3779B97F4A7C15UL;
     private string _lastWeather = "";
     private Palette _palette = DefaultPalette();
     private float _cirrusCoverage = 0.25f;
@@ -41,8 +49,17 @@ internal partial class RuntimeNativeShaderSky : Node3D
         0.52f, 1.0f, 0.35f, 0.25f, 0.6f, 4.5f);
 
     internal void Configure(Func<Vector3> anchor, float units, Func<string> weather, Func<Vector3> sun,
-        int cloudOctaves = 5, float starDensity = 1.5f)
+        int cloudOctaves = 5, float starDensity = 1.5f, bool enableCloudDeck = true,
+        float cloudTimeOverride = -1.0f, bool cloudDebugAlpha = false)
     {
+        _enableCloudDeck = enableCloudDeck;
+        _cloudTimeOverride = cloudTimeOverride;
+        if (_cloudDeck is not null)
+        {
+            _cloudDeck.QueueFree();
+            _cloudDeck = null;
+            _cloudDeckMaterial = null;
+        }
         _anchor = anchor;
         _weather = weather;
         _sun = sun;
@@ -51,6 +68,7 @@ internal partial class RuntimeNativeShaderSky : Node3D
         _material.SetShaderParameter("star_density", starDensity);
         _material.SetShaderParameter("cloud_octaves", Math.Clamp(cloudOctaves, 1, 5));
         _material.SetShaderParameter("wind_direction", new Vector2(0.85f, 0.28f));
+        _material.RenderPriority = 0;
         // Equirect star panorama first. The old night_sky.png is a 512x512
         // tangent tile; mapped as a 360x180 panorama its texels are ~0.7 deg
         // wide, so every star smears into a multi-pixel blob.
@@ -84,6 +102,37 @@ internal partial class RuntimeNativeShaderSky : Node3D
         };
         _sphereRadius = 190.0f;
         AddChild(_sphere);
+        if (_enableCloudDeck)
+        {
+            var shader = GD.Load<Shader>("res://shaders/cloud_layer.gdshader");
+            if (shader is null)
+            {
+                GD.PushError("cloud_layer.gdshader missing; disabling cloud deck");
+                _enableCloudDeck = false;
+            }
+            else
+            {
+                var rng = new RandomNumberGenerator { Seed = CloudDeckSeed };
+                _cloudSeed = new Vector2(rng.Randf(), rng.Randf()) * 100.0f;
+                _cloudDeckMaterial = new ShaderMaterial { Shader = shader, RenderPriority = 1 };
+                _cloudDeckMaterial.SetShaderParameter("seed", _cloudSeed);
+                _cloudDeckMaterial.SetShaderParameter("deck_octaves", Mathf.Clamp(cloudOctaves - 1, 1, 4));
+                _cloudDeckMaterial.SetShaderParameter("debug_view", cloudDebugAlpha ? 1 : 0);
+                _cloudDeck = new MeshInstance3D
+                {
+                    Name = "ShaderCloudDeck",
+                    Mesh = new SphereMesh { Radius = 1.0f, Height = 2.0f, RadialSegments = 96, Rings = 48 },
+                    Scale = new Vector3(190.0f, 190.0f, 190.0f),
+                    CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+                    GIMode = GeometryInstance3D.GIModeEnum.Disabled,
+                    IgnoreOcclusionCulling = true,
+                    MaterialOverride = _cloudDeckMaterial,
+                };
+                _cloudDeckRadius = 190.0f;
+                AddChild(_cloudDeck);
+                GD.Print($"OPENNV_CLOUD_DECK created shader={shader.ResourcePath} seed={_cloudSeed} octaves={Mathf.Clamp(cloudOctaves - 1, 1, 4)} debug={cloudDebugAlpha}");
+            }
+        }
         ApplyWeather("");
     }
 
@@ -104,6 +153,13 @@ internal partial class RuntimeNativeShaderSky : Node3D
                 _sphereRadius = radius;
                 _sphere.Scale = new Vector3(radius, radius, radius);
                 GD.Print($"OPENNV_SKY_DOME_RADIUS radius={radius:F0} cameraFar={camera?.Far:F0}");
+            }
+            if (_cloudDeck is not null && camera is not null)
+            {
+                var deckRadius = Mathf.Max(1.0f, Mathf.Min(_sphereRadius * 0.995f, camera.Far * 0.99f));
+                _cloudDeckRadius = deckRadius;
+                _cloudDeck.GlobalTransform = new Transform3D(
+                    Basis.Identity.Scaled(Vector3.One * deckRadius), camera.GlobalPosition);
             }
         }
         if (_material is null) return;
@@ -136,6 +192,34 @@ internal partial class RuntimeNativeShaderSky : Node3D
         _material.SetShaderParameter("cloud_shadow_color", shadow);
         _material.SetShaderParameter("sun_direction", sun);
         _material.SetShaderParameter("sun_glow", _palette.Glow * (0.05f + 0.95f * day) + dusk * 0.5f);
+        if (_cloudDeckMaterial is not null)
+        {
+            var nightK = Mathf.Clamp(night, 0.0f, 1.0f);
+            var fade = Mathf.Clamp((nightK - 0.15f) / 0.40f, 0.0f, 1.0f);
+            fade = fade * fade * (3.0f - 2.0f * fade);
+            var weather = Mathf.Clamp((_palette.Coverage - 0.45f) / 0.35f, 0.0f, 1.0f);
+            var deckCloud = _palette.Cloud.Lerp(new Color(0.10f, 0.12f, 0.17f), nightK * 0.8f)
+                .Lerp(new Color(0.05f, 0.06f, 0.08f), weather * 0.4f);
+            var deckShadow = _palette.Shadow.Lerp(new Color(0.03f, 0.035f, 0.05f), nightK * 0.8f);
+            _cloudDeckMaterial.SetShaderParameter("coverage", Mathf.Lerp(0.0f, Mathf.Lerp(0.55f, 0.80f, weather), fade));
+            _cloudDeckMaterial.SetShaderParameter("optical_depth", Mathf.Lerp(0.0f, Mathf.Lerp(6.0f, 9.0f, weather), fade));
+            _cloudDeckMaterial.SetShaderParameter("cloud_color", new Vector3(deckCloud.R, deckCloud.G, deckCloud.B));
+            _cloudDeckMaterial.SetShaderParameter("shadow_color", new Vector3(deckShadow.R, deckShadow.G, deckShadow.B));
+            _cloudDeckMaterial.SetShaderParameter("brightness", Mathf.Lerp(0.45f, 0.65f, nightK));
+            _cloudDeckMaterial.SetShaderParameter("wind", new Vector2(0.0035f, 0.0012f) * Mathf.Lerp(1.0f, 1.6f, weather));
+            _cloudDeckMaterial.SetShaderParameter("cloud_speed", Mathf.Lerp(0.35f, 0.55f, weather));
+            _cloudDeckMaterial.SetShaderParameter("moon_dir", sun.Y < 0.0f ? new Vector3(-sun.X, -sun.Y, -sun.Z) : sun);
+            _cloudDeckMaterial.SetShaderParameter("moon_color", new Vector3(0.35f, 0.42f, 0.55f));
+            var cloudTime = _cloudTimeOverride >= 0.0f ? _cloudTimeOverride : (float)(Time.GetTicksMsec() * 0.001);
+            _cloudDeckMaterial.SetShaderParameter("cloud_time", cloudTime);
+            if (_cloudDeckRadius > 0.0f && !_cloudStateLogged)
+            {
+                _cloudStateLogged = true;
+                GD.Print($"OPENNV_CLOUD_DECK_STATE night={nightK:F2} fade={fade:F2} weather={weather:F2} " +
+                    $"coverage={_cloudDeckMaterial.GetShaderParameter("coverage")} optical={_cloudDeckMaterial.GetShaderParameter("optical_depth")} " +
+                    $"time={cloudTime:F2} debug={_cloudDeckMaterial.GetShaderParameter("debug_view")}");
+            }
+        }
         // Midday clear/cloudy skies read thin and feathery (cirrus), not puffy;
         // dawn/dusk keeps the sparse authored shape. Rain and storm weather is
         // the exception: it keeps a dense sheet at every hour and the cap is
