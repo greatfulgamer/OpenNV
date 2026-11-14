@@ -27,6 +27,11 @@ internal partial class RuntimeNativeShaderSky : Node3D
     private ShaderMaterial? _material;
     private MeshInstance3D? _sphere;
     private float _sphereRadius;
+    private bool _enableNightClouds;
+    private Vector2 _nightCloudSeed;
+    private float _cloudTimeOverride = -1.0f;
+    private bool _cloudDebugAlpha;
+    private const ulong NightCloudSeed = 0x9E3779B97F4A7C15UL;
     private string _lastWeather = "";
     private Palette _palette = DefaultPalette();
     private float _cirrusCoverage = 0.25f;
@@ -41,8 +46,12 @@ internal partial class RuntimeNativeShaderSky : Node3D
         0.52f, 1.0f, 0.35f, 0.25f, 0.6f, 4.5f);
 
     internal void Configure(Func<Vector3> anchor, float units, Func<string> weather, Func<Vector3> sun,
-        int cloudOctaves = 5, float starDensity = 1.5f)
+        int cloudOctaves = 5, float starDensity = 1.5f, bool enableNightClouds = true,
+        float cloudTimeOverride = -1.0f, bool cloudDebugAlpha = false)
     {
+        _enableNightClouds = enableNightClouds;
+        _cloudTimeOverride = cloudTimeOverride;
+        _cloudDebugAlpha = cloudDebugAlpha;
         _anchor = anchor;
         _weather = weather;
         _sun = sun;
@@ -51,6 +60,11 @@ internal partial class RuntimeNativeShaderSky : Node3D
         _material.SetShaderParameter("star_density", starDensity);
         _material.SetShaderParameter("cloud_octaves", Math.Clamp(cloudOctaves, 1, 5));
         _material.SetShaderParameter("wind_direction", new Vector2(0.85f, 0.28f));
+        var rng = new RandomNumberGenerator { Seed = NightCloudSeed };
+        _nightCloudSeed = new Vector2(rng.Randf(), rng.Randf()) * 100.0f;
+        _material.SetShaderParameter("night_cloud_seed", _nightCloudSeed);
+        _material.SetShaderParameter("night_cloud_wind", new Vector2(0.0035f, 0.0012f));
+        _material.SetShaderParameter("night_cloud_debug", cloudDebugAlpha ? 1 : 0);
         // Equirect star panorama first. The old night_sky.png is a 512x512
         // tangent tile; mapped as a 360x180 panorama its texels are ~0.7 deg
         // wide, so every star smears into a multi-pixel blob.
@@ -136,6 +150,21 @@ internal partial class RuntimeNativeShaderSky : Node3D
         _material.SetShaderParameter("cloud_shadow_color", shadow);
         _material.SetShaderParameter("sun_direction", sun);
         _material.SetShaderParameter("sun_glow", _palette.Glow * (0.05f + 0.95f * day) + dusk * 0.5f);
+        if (_enableNightClouds)
+        {
+            var nightK = Mathf.Clamp(night, 0.0f, 1.0f);
+            var fade = Mathf.Clamp((nightK - 0.15f) / 0.40f, 0.0f, 1.0f);
+            fade = fade * fade * (3.0f - 2.0f * fade);
+            var weather = Mathf.Clamp((_palette.Coverage - 0.45f) / 0.35f, 0.0f, 1.0f);
+            var nc = new Color(0.055f, 0.065f, 0.09f).Lerp(new Color(0.03f, 0.035f, 0.05f), weather * 0.5f);
+            var ns = new Color(0.02f, 0.025f, 0.035f);
+            _material.SetShaderParameter("night_cloud_coverage", Mathf.Lerp(0.0f, Mathf.Lerp(0.35f, 0.60f, weather), fade));
+            _material.SetShaderParameter("night_cloud_optical", Mathf.Lerp(0.0f, Mathf.Lerp(4.0f, 7.0f, weather), fade));
+            _material.SetShaderParameter("night_cloud_color", new Vector3(nc.R, nc.G, nc.B));
+            _material.SetShaderParameter("night_cloud_shadow", new Vector3(ns.R, ns.G, ns.B));
+            var cloudTime = _cloudTimeOverride >= 0.0f ? _cloudTimeOverride : (float)(Time.GetTicksMsec() * 0.001);
+            _material.SetShaderParameter("night_cloud_time", cloudTime);
+        }
         // Midday clear/cloudy skies read thin and feathery (cirrus), not puffy;
         // dawn/dusk keeps the sparse authored shape. Rain and storm weather is
         // the exception: it keeps a dense sheet at every hour and the cap is

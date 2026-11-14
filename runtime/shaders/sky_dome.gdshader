@@ -21,6 +21,14 @@ uniform float haze_strength : hint_range(0.0, 1.0) = 0.35;
 uniform float star_intensity : hint_range(0.0, 2.0) = 0.0;
 
 uniform vec2 wind_direction = vec2(0.85, 0.28);
+uniform float night_cloud_coverage = 0.0;
+uniform float night_cloud_optical = 0.0;
+uniform vec2 night_cloud_seed = vec2(0.0);
+uniform float night_cloud_time = 0.0;
+uniform vec2 night_cloud_wind = vec2(0.0035, 0.0012);
+uniform vec3 night_cloud_color : source_color = vec3(0.10, 0.12, 0.17);
+uniform vec3 night_cloud_shadow : source_color = vec3(0.03, 0.035, 0.05);
+uniform int night_cloud_debug = 0;
 uniform float cirrus_coverage : hint_range(0.0, 1.0) = 0.34;
 uniform float cirrus_opacity : hint_range(0.0, 1.0) = 0.38;
 uniform float cirrus_scale : hint_range(0.1, 40.0) = 13.0;
@@ -163,5 +171,23 @@ void fragment() {
         col = mix(col, cloud_final, cumulus * 0.92 * horizon_fade);
     }
 
+    float nightAlpha = 0.0;
+    if (night_cloud_coverage > 0.001) {
+        float up = max(dir.y, 0.045);
+        vec2 np = dir.xz / (dir.y + 0.15) * 0.6 + night_cloud_wind * night_cloud_time + night_cloud_seed;
+        float bank = fbm(np * 2.6, 1.0);
+        bank = clamp((bank - 0.5) * 2.2 + 0.5, 0.0, 1.0);
+        float region = fbm(dir.xz * 2.2 + night_cloud_seed * 0.3, 1.0);
+        float cov = clamp(night_cloud_coverage + (region - 0.5) * 0.50, 0.0, 1.0);
+        float d = smoothstep(1.0 - cov, 1.0 - cov + 0.22, bank);
+        d *= 1.0 - 0.55 * smoothstep(0.35, 0.75, fbm(np * 3.2, 1.0));
+        float air = clamp(1.0 / up, 1.0, 6.0);
+        float tau = d * night_cloud_optical * air;
+        tau *= smoothstep(0.0, 0.10, dir.y);
+        nightAlpha = 1.0 - exp(-tau);
+        vec3 cloudCol = mix(night_cloud_shadow, night_cloud_color, smoothstep(0.0, 0.55, d));
+        col = mix(col, cloudCol, nightAlpha);
+    }
+    if (night_cloud_debug == 1) col = vec3(nightAlpha);
     ALBEDO = col;
 }
