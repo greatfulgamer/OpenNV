@@ -176,11 +176,12 @@ void fragment() {
         float up = max(dir.y, 0.045);
         vec2 np = dir.xz / (dir.y + 0.15) * 0.6 + night_cloud_wind * night_cloud_time + night_cloud_seed;
         float bank = fbm(np * 2.6, 1.0);
-        bank = clamp((bank - 0.5) * 2.2 + 0.5, 0.0, 1.0);
+        bank = clamp((bank - 0.5) * 1.8 + 0.5, 0.0, 1.0);
         float region = fbm(dir.xz * 2.2 + night_cloud_seed * 0.3, 1.0);
         float cov = clamp(night_cloud_coverage + (region - 0.5) * 0.50, 0.0, 1.0);
-        float d = smoothstep(1.0 - cov, 1.0 - cov + 0.22, bank);
-        d *= 1.0 - 0.55 * smoothstep(0.35, 0.75, fbm(np * 3.2, 1.0));
+        float d = smoothstep(1.0 - cov, 1.0 - cov + 0.38, bank);
+        d *= 1.0 - 0.70 * smoothstep(0.30, 0.78, fbm(np * 4.2, 1.0));
+        d *= 0.55 + 0.45 * smoothstep(0.20, 0.80, fbm(np * 1.3 + vec2(4.1, 2.7), 1.0));
         float air = clamp(1.0 / up, 1.0, 6.0);
         float tau = d * night_cloud_optical * air;
         tau *= smoothstep(0.0, 0.10, dir.y);
